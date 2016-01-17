@@ -6,7 +6,7 @@ use sdl2::pixels::PixelFormatEnum;
 use sdl2::rect::Rect;
 use sdl2::render::{Renderer, Texture};
 
-struct OffscreenBuffer<'a> {
+pub struct OffscreenBuffer<'a> {
     renderer: Renderer<'a>,
     buffer: Texture,
     width: i32,
@@ -32,34 +32,11 @@ impl<'a> OffscreenBuffer<'a> {
         self.renderer.present();
     }
 
-    pub fn render_weird_graient(&mut self, x_offset: i32, y_offset: i32) {
-        let width = self.width;
-        let height = self.height;
-        self.buffer
-            .with_lock(None, |buffer: &mut [u8], pitch: usize| {
-                unsafe {
-                    let mut row = buffer.as_mut_ptr();
-                    for y in 0..height {
-                        let mut pixel = row as *mut u32;
-                        for x in 0..width {
-                            // NOTE(coeuvre): The pixel format is as following:
-                            //   - In memory: AA BB GG RR
-                            //   - In register: 0xRRGGBBAA
-                            let r = (x as i32 + x_offset) as u8 as u32;
-                            let g = (y as i32 + y_offset) as u8 as u32;
-                            *pixel = (r << 24) | (g << 16);
-                            pixel = pixel.offset(1);
-                        }
-                        row = row.offset(pitch as isize);
-                    }
-                }
-            })
-            .unwrap();
+    pub fn hline(&mut self, y: i32, mut x_min: i32, mut x_max: i32, color: RGBA) {
+        if y < 0 || y >= self.height {
+            return;
+        }
 
-    }
-
-    pub fn draw_hline(&mut self, mut y: i32, mut x_min: i32, mut x_max: i32, color: u32) {
-        y = self.clamp_y(y);
         x_min = self.clamp_x(x_min);
         x_max = self.clamp_x(x_max);
 
@@ -71,7 +48,7 @@ impl<'a> OffscreenBuffer<'a> {
                     let mut pixel = row as *mut u32;
                     pixel = pixel.offset(x_min as isize);
                     for _ in 0..(x_max - x_min) {
-                        *pixel = color;
+                        *pixel = color.into_u32();
                         pixel = pixel.offset(1);
                     }
                 }
@@ -79,8 +56,11 @@ impl<'a> OffscreenBuffer<'a> {
             .unwrap();
     }
 
-    pub fn draw_vline(&mut self, mut x: i32, mut y_min: i32, mut y_max: i32, color: u32) {
-        x = self.clamp_x(x);
+    pub fn vline(&mut self, x: i32, mut y_min: i32, mut y_max: i32, color: RGBA) {
+        if x < 0 || x >= self.width {
+            return;
+        }
+
         y_min = self.clamp_y(y_min);
         y_max = self.clamp_y(y_max);
 
@@ -92,12 +72,19 @@ impl<'a> OffscreenBuffer<'a> {
                     col = col.offset((y_min as usize * pitch) as isize);
                     for _ in y_min..y_max {
                         let mut pixel = col as *mut u32;
-                        *pixel = color;
+                        *pixel = color.into_u32();
                         col = col.offset(pitch as isize);
                     }
                 }
             })
             .unwrap();
+    }
+
+    pub fn rect(&mut self, x_min: i32, y_min: i32, x_max: i32, y_max: i32, color: RGBA) {
+        self.hline(y_min, x_min, x_max, color);
+        self.hline(y_max, x_min, x_max, color);
+        self.vline(x_min, y_min, y_max, color);
+        self.vline(x_max, y_min, y_max, color);
     }
 
     fn clamp_x(&self, x: i32) -> i32 {
@@ -121,12 +108,111 @@ impl<'a> OffscreenBuffer<'a> {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct RGBA {
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+    pub a: f32,
+}
+
+impl RGBA {
+    pub fn into_u32(self) -> u32 {
+        // NOTE(coeuvre): The pixel format is as following:
+        //   - In memory: AA BB GG RR
+        //   - In register: 0xRRGGBBAA
+        let r = (self.r * 255.0) as u8 as u32;
+        let g = (self.g * 255.0) as u8 as u32;
+        let b = (self.b * 255.0) as u8 as u32;
+        let a = (self.a * 255.0) as u8 as u32;
+        (r << 24) | (g << 16) | (b << 8) | a
+    }
+}
+
+pub struct Playfield {
+    width: i32,
+    height: i32,
+}
+
+impl Playfield {
+    pub fn new(width: i32, height: i32) -> Playfield {
+        Playfield {
+            width: width,
+            height: height,
+        }
+    }
+
+    pub fn draw(&self, renderer: &mut OffscreenBuffer, x: i32, y: i32) {
+        let block_size_in_pixels = 32;
+        let color = RGBA {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: 1.0,
+        };
+
+        let width = self.width * block_size_in_pixels;
+        let height = self.height * block_size_in_pixels;
+
+        renderer.rect(x, y, x + width, y + height, color);
+
+        let color = RGBA {
+            r: 0.6,
+            g: 0.6,
+            b: 0.6,
+            a: 1.0,
+        };
+
+        for row in 1..self.height {
+            let y_offset = row * block_size_in_pixels;
+            renderer.hline(y + y_offset, x, x + width, color);
+        }
+
+        for col in 1..self.width {
+            let x_offset = col * block_size_in_pixels;
+            renderer.vline(x + x_offset, y, y + height, color);
+        }
+    }
+}
+
+// pub struct PlayfieldBuilder {
+// width: i32,
+// height: i32,
+// margin_x: i32,
+// margin_y: i32,
+// }
+//
+// impl PlayfieldBuilder {
+// pub fn new() -> PlayfieldBuilder {
+// PlayfieldBuilder {
+// width: 0,
+// width: 0,
+// height: 0,
+// margin_x: 0,
+// margin_y: 0,
+// }
+// }
+//
+// pub fn size(self, width: i32, height: i32) -> PlayfieldBuilder {
+// self.width = width;
+// self.height = height;
+// self
+// }
+//
+// pub fn margin(self, x: i32, y: i32) -> PlayfieldBuilder {
+// self.margin_x = x;
+// self.margin_y = y;
+// self
+// }
+// }
+//
+
 fn main() {
     let sdl2 = sdl2::init().unwrap();
     let video = sdl2.video().unwrap();
 
-    let width = 800;
-    let height = 600;
+    let width = 600;
+    let height = 800;
     let window = video.window("Retris", width, height)
                       .position_centered()
                       .opengl()
@@ -139,8 +225,7 @@ fn main() {
 
     let mut event_pump = sdl2.event_pump().unwrap();
 
-    let mut x_offset = 0;
-    let mut y_offset = 0;
+    let playfield = Playfield::new(10, 20);
 
     'running: loop {
         for event in event_pump.poll_iter() {
@@ -151,12 +236,7 @@ fn main() {
             }
         }
 
-        buffer.render_weird_graient(x_offset, y_offset);
-        buffer.draw_hline(10, 100, width as i32, 0x00000000);
-        buffer.draw_vline(100, 10, height as i32, 0x00000000);
+        playfield.draw(&mut buffer, 64, 32);
         buffer.present(width, height);
-
-        x_offset += 1;
-        y_offset += 2;
     }
 }
