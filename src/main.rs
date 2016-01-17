@@ -1,137 +1,118 @@
+#![feature(custom_attribute, stmt_expr_attributes)]
+
+extern crate rand;
 extern crate sdl2;
 
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
-use sdl2::pixels::PixelFormatEnum;
-use sdl2::rect::Rect;
-use sdl2::render::{Renderer, Texture};
 
-pub struct OffscreenBuffer<'a> {
-    renderer: Renderer<'a>,
-    buffer: Texture,
-    width: i32,
-    height: i32,
+use renderer::*;
+
+mod renderer;
+
+pub struct BlockGenerator {
+    template: Vec<Vec<Vec<bool>>>,
 }
 
-impl<'a> OffscreenBuffer<'a> {
-    pub fn new(renderer: Renderer<'a>, width: u32, height: u32) -> OffscreenBuffer<'a> {
-        OffscreenBuffer {
-            buffer: renderer.create_texture_streaming(PixelFormatEnum::RGBA8888, (width, height))
-                            .unwrap(),
-            renderer: renderer,
-            width: width as i32,
-            height: height as i32,
+impl BlockGenerator {
+    pub fn new() -> BlockGenerator {
+        // NOTE(coeuvre): Bitmap data for blocks. The origin is left-bottom corner.
+        //
+        //   x x x x
+        //   x x x x
+        //   x x x x
+        //   o x x x
+        //
+        #[rustfmt_skip]
+        BlockGenerator {
+            template: vec![
+                // Block I
+                vec![
+                    vec![
+                        false, true, false, false,
+                        false, true, false, false,
+                        false, true, false, false,
+                        false, true, false, false,
+                    ],
+                    vec![
+                        false, false, false, false,
+                        true,  true,  true,  true,
+                        false, false, false, false,
+                        false, false, false, false,
+                    ],
+                ],
+
+                // Block O
+                vec![
+                    vec![
+                        false, false, false, false,
+                        false, true, true, false,
+                        false, true, true, false,
+                        false, false, false, false,
+                    ],
+                ],
+            ],
         }
     }
 
-    pub fn present(&mut self, window_width: u32, window_height: u32) {
-        // self.renderer.clear();
-        self.renderer.copy(&self.buffer,
-                           None,
-                           Rect::new(0, 0, window_width, window_height).unwrap());
-        self.renderer.present();
-    }
+    pub fn generate(&self) -> Block {
+        let shape = rand::random::<usize>() % self.template.len();
+        let order = rand::random::<usize>() % self.template[shape].len();
 
-    pub fn hline(&mut self, y: i32, mut x_min: i32, mut x_max: i32, color: RGBA) {
-        if y < 0 || y >= self.height {
-            return;
-        }
-
-        x_min = self.clamp_x(x_min);
-        x_max = self.clamp_x(x_max);
-
-        self.buffer
-            .with_lock(None, |buffer: &mut [u8], pitch: usize| {
-                unsafe {
-                    let mut row = buffer.as_mut_ptr();
-                    row = row.offset((y as usize * pitch) as isize);
-                    let mut pixel = row as *mut u32;
-                    pixel = pixel.offset(x_min as isize);
-                    for _ in 0..(x_max - x_min) {
-                        *pixel = color.into_u32();
-                        pixel = pixel.offset(1);
-                    }
-                }
-            })
-            .unwrap();
-    }
-
-    pub fn vline(&mut self, x: i32, mut y_min: i32, mut y_max: i32, color: RGBA) {
-        if x < 0 || x >= self.width {
-            return;
-        }
-
-        y_min = self.clamp_y(y_min);
-        y_max = self.clamp_y(y_max);
-
-        self.buffer
-            .with_lock(None, |buffer: &mut [u8], pitch: usize| {
-                unsafe {
-                    let mut col = buffer.as_mut_ptr();
-                    col = (col as *mut u32).offset(x as isize) as *mut u8;
-                    col = col.offset((y_min as usize * pitch) as isize);
-                    for _ in y_min..y_max {
-                        let mut pixel = col as *mut u32;
-                        *pixel = color.into_u32();
-                        col = col.offset(pitch as isize);
-                    }
-                }
-            })
-            .unwrap();
-    }
-
-    pub fn rect(&mut self, x_min: i32, y_min: i32, x_max: i32, y_max: i32, color: RGBA) {
-        self.hline(y_min, x_min, x_max, color);
-        self.hline(y_max, x_min, x_max, color);
-        self.vline(x_min, y_min, y_max, color);
-        self.vline(x_max, y_min, y_max, color);
-    }
-
-    fn clamp_x(&self, x: i32) -> i32 {
-        if x < 0 {
-            0
-        } else if x >= self.width {
-            self.width - 1
-        } else {
-            x
+        Block {
+            x: 0,
+            y: 0,
+            shape: shape,
+            order: order,
         }
     }
 
-    fn clamp_y(&self, y: i32) -> i32 {
-        if y < 0 {
-            0
-        } else if y >= self.height {
-            self.height - 1
-        } else {
-            y
-        }
+    pub fn data(&self, shape: usize, order: usize) -> &Vec<bool> {
+        &self.template[shape][order]
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct RGBA {
-    pub r: f32,
-    pub g: f32,
-    pub b: f32,
-    pub a: f32,
+pub struct Block {
+    x: i32,
+    y: i32,
+    shape: usize,
+    order: usize,
 }
 
-impl RGBA {
-    pub fn into_u32(self) -> u32 {
-        // NOTE(coeuvre): The pixel format is as following:
-        //   - In memory: AA BB GG RR
-        //   - In register: 0xRRGGBBAA
-        let r = (self.r * 255.0) as u8 as u32;
-        let g = (self.g * 255.0) as u8 as u32;
-        let b = (self.b * 255.0) as u8 as u32;
-        let a = (self.a * 255.0) as u8 as u32;
-        (r << 24) | (g << 16) | (b << 8) | a
+impl Block {
+    pub fn move_to(&mut self, x: i32, y: i32) {
+        self.x = x;
+        self.y = y;
+    }
+
+    pub fn down(&mut self) {
+        self.y -= 1;
+    }
+
+    pub fn left(&mut self) {
+        self.x -= 1;
+    }
+
+    pub fn right(&mut self) {
+        self.x += 1;
+    }
+
+    pub fn width(&self) -> usize {
+        4
+    }
+
+    pub fn height(&self) -> usize {
+        4
     }
 }
 
 pub struct Playfield {
     width: i32,
     height: i32,
+    static_blocks: Vec<bool>,
+
+    generator: BlockGenerator,
+    current_block: Option<Block>,
 }
 
 impl Playfield {
@@ -139,22 +120,27 @@ impl Playfield {
         Playfield {
             width: width,
             height: height,
+            static_blocks: vec![false; (width * height) as usize],
+
+            generator: BlockGenerator::new(),
+            current_block: None,
         }
     }
 
-    pub fn draw(&self, renderer: &mut OffscreenBuffer, x: i32, y: i32) {
+    pub fn put_block(&mut self) {
+        if self.current_block.is_some() {
+            return;
+        }
+
+        let block = self.generator.generate();
+        self.current_block = Some(block);
+    }
+
+    pub fn render(&mut self, renderer: &mut SoftwareRenderer, x: i32, y: i32) {
         let block_size_in_pixels = 32;
-        let color = RGBA {
-            r: 1.0,
-            g: 1.0,
-            b: 1.0,
-            a: 1.0,
-        };
 
         let width = self.width * block_size_in_pixels;
         let height = self.height * block_size_in_pixels;
-
-        renderer.rect(x, y, x + width, y + height, color);
 
         let color = RGBA {
             r: 0.6,
@@ -163,6 +149,46 @@ impl Playfield {
             a: 1.0,
         };
 
+        // Current block
+        if let Some(ref current_block) = self.current_block {
+            for (i, block) in self.generator
+                                  .data(current_block.shape, current_block.order)
+                                  .iter()
+                                  .enumerate() {
+                if *block {
+                    let col = (i % current_block.width()) as i32;
+                    let row = (i / current_block.height()) as i32;
+                    let x_offset = (current_block.x + col) * block_size_in_pixels;
+                    let y_offset = (current_block.y + row) * block_size_in_pixels;
+                    let x = x + x_offset;
+                    let y = y + y_offset;
+                    renderer.fill_rect(x + 1,
+                                       y + 1,
+                                       x + block_size_in_pixels,
+                                       y + block_size_in_pixels,
+                                       color);
+                }
+            }
+        }
+
+        // Static blocks
+        for (i, block) in self.static_blocks.iter().enumerate() {
+            if *block {
+                let col = i as i32 % self.width;
+                let row = i as i32 / self.height;
+                let x_offset = col * block_size_in_pixels;
+                let y_offset = row * block_size_in_pixels;
+                let x = x + x_offset;
+                let y = y + y_offset;
+                renderer.fill_rect(x + 1,
+                                   y + 1,
+                                   x + block_size_in_pixels,
+                                   y + block_size_in_pixels,
+                                   color);
+            }
+        }
+
+        // Grids
         for row in 1..self.height {
             let y_offset = row * block_size_in_pixels;
             renderer.hline(y + y_offset, x, x + width, color);
@@ -172,40 +198,19 @@ impl Playfield {
             let x_offset = col * block_size_in_pixels;
             renderer.vline(x + x_offset, y, y + height, color);
         }
+
+        // Border
+        let color = RGBA {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+            a: 1.0,
+        };
+
+        renderer.rect(x, y, x + width, y + height, color);
+
     }
 }
-
-// pub struct PlayfieldBuilder {
-// width: i32,
-// height: i32,
-// margin_x: i32,
-// margin_y: i32,
-// }
-//
-// impl PlayfieldBuilder {
-// pub fn new() -> PlayfieldBuilder {
-// PlayfieldBuilder {
-// width: 0,
-// width: 0,
-// height: 0,
-// margin_x: 0,
-// margin_y: 0,
-// }
-// }
-//
-// pub fn size(self, width: i32, height: i32) -> PlayfieldBuilder {
-// self.width = width;
-// self.height = height;
-// self
-// }
-//
-// pub fn margin(self, x: i32, y: i32) -> PlayfieldBuilder {
-// self.margin_x = x;
-// self.margin_y = y;
-// self
-// }
-// }
-//
 
 fn main() {
     let sdl2 = sdl2::init().unwrap();
@@ -221,22 +226,25 @@ fn main() {
 
     let renderer = window.renderer().build().unwrap();
 
-    let mut buffer = OffscreenBuffer::new(renderer, width, height);
+    let mut renderer = SoftwareRenderer::new(renderer, width, height);
 
     let mut event_pump = sdl2.event_pump().unwrap();
 
-    let playfield = Playfield::new(10, 20);
+    let mut playfield = Playfield::new(10, 22);
 
     'running: loop {
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit {..} |
                 Event::KeyDown {keycode: Some(Keycode::Escape), ..} => break 'running,
+                Event::KeyDown {keycode: Some(Keycode::Space), ..} => {
+                    playfield.put_block();
+                }
                 _ => {}
             }
         }
 
-        playfield.draw(&mut buffer, 64, 32);
-        buffer.present(width, height);
+        playfield.render(&mut renderer, 64, 32);
+        renderer.present(width, height);
     }
 }
