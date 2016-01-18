@@ -2,9 +2,12 @@
 
 extern crate rand;
 extern crate sdl2;
+extern crate time;
 
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+
+use time::PreciseTime;
 
 use renderer::*;
 
@@ -113,6 +116,9 @@ pub struct Playfield {
 
     generator: BlockGenerator,
     current_block: Option<Block>,
+
+    interval: f32,
+    time_remain: f32,
 }
 
 impl Playfield {
@@ -124,6 +130,9 @@ impl Playfield {
 
             generator: BlockGenerator::new(),
             current_block: None,
+
+            interval: 1.0,
+            time_remain: 0.0,
         }
     }
 
@@ -132,11 +141,39 @@ impl Playfield {
             return;
         }
 
-        let block = self.generator.generate();
+        let mut block = self.generator.generate();
+        block.move_to(3, 19);
         self.current_block = Some(block);
+        self.time_remain = self.interval;
     }
 
-    pub fn render(&mut self, renderer: &mut SoftwareRenderer, x: i32, y: i32) {
+    pub fn move_current_block_left(&mut self) {
+        if let Some(ref mut current_block) = self.current_block {
+            current_block.left();
+        }
+    }
+
+    pub fn move_current_block_right(&mut self) {
+        if let Some(ref mut current_block) = self.current_block {
+            current_block.right();
+        }
+    }
+
+    pub fn move_current_block_down(&mut self) {
+        if let Some(ref mut current_block) = self.current_block {
+            current_block.down();
+        }
+    }
+
+    pub fn transform_current_block(&mut self) {}
+
+    pub fn update(&mut self, renderer: &mut SoftwareRenderer, dt: f32, x: i32, y: i32) {
+        self.time_remain -= dt;
+        if self.time_remain < 0.0 {
+            self.time_remain += self.interval;
+            self.move_current_block_down();
+        }
+
         let block_size_in_pixels = 32;
 
         let width = self.width * block_size_in_pixels;
@@ -150,7 +187,8 @@ impl Playfield {
         };
 
         // Current block
-        if let Some(ref current_block) = self.current_block {
+        if let Some(ref mut current_block) = self.current_block {
+
             for (i, block) in self.generator
                                   .data(current_block.shape, current_block.order)
                                   .iter()
@@ -224,7 +262,7 @@ fn main() {
                       .build()
                       .unwrap();
 
-    let renderer = window.renderer().build().unwrap();
+    let renderer = window.renderer().present_vsync().build().unwrap();
 
     let mut renderer = SoftwareRenderer::new(renderer, width, height);
 
@@ -232,7 +270,11 @@ fn main() {
 
     let mut playfield = Playfield::new(10, 22);
 
+    let mut frame_last = PreciseTime::now();
+
     'running: loop {
+        let frame_start = PreciseTime::now();
+
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit {..} |
@@ -240,11 +282,27 @@ fn main() {
                 Event::KeyDown {keycode: Some(Keycode::Space), ..} => {
                     playfield.put_block();
                 }
+                Event::KeyDown {keycode: Some(Keycode::Left), ..} => {
+                    playfield.move_current_block_left();
+                }
+                Event::KeyDown {keycode: Some(Keycode::Right), ..} => {
+                    playfield.move_current_block_right();
+                }
+                Event::KeyDown {keycode: Some(Keycode::Up), ..} => {
+                    playfield.transform_current_block();
+                }
                 _ => {}
             }
         }
 
-        playfield.render(&mut renderer, 64, 32);
+        let now = PreciseTime::now();
+        let dt = frame_last.to(now).num_milliseconds() as f32 / 1000.0;
+        frame_last = now;
+        playfield.update(&mut renderer, dt, 64, 32);
         renderer.present(width, height);
+
+        let frame_end = PreciseTime::now();
+        let span = frame_start.to(frame_end);
+        println!("FPS: {}", (1000.0 / span.num_milliseconds() as f64) as u32);
     }
 }

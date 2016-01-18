@@ -15,6 +15,7 @@ fn clamp(value: i32, min: i32, max: i32) -> i32 {
 pub struct SoftwareRenderer<'a> {
     sdl_renderer: Renderer<'a>,
     buffer: Texture,
+    pixels: Vec<u32>,
     width: i32,
     height: i32,
 }
@@ -25,17 +26,42 @@ impl<'a> SoftwareRenderer<'a> {
             buffer: renderer.create_texture_streaming(PixelFormatEnum::RGBA8888, (width, height))
                             .unwrap(),
             sdl_renderer: renderer,
+            pixels: vec![0; (width * height) as usize],
             width: width as i32,
             height: height as i32,
         }
     }
 
     pub fn present(&mut self, window_width: u32, window_height: u32) {
-        self.sdl_renderer.clear();
+        // NOTE(coeuvre): Copy pixels from memory to Texture
+        {
+            let width = self.width;
+            let height = self.height;
+            let ref pixels = self.pixels;
+            self.buffer
+                .with_lock(None, |buffer: &mut [u8], pitch: usize| {
+                    unsafe {
+                        let mut row = buffer.as_mut_ptr();
+                        for y in 0..height {
+                            let mut pixel = row as *mut u32;
+                            for x in 0..width {
+                                *pixel = pixels[(y * width + x) as usize];
+                                pixel = pixel.offset(1);
+                            }
+                            row = row.offset(pitch as isize);
+                        }
+                    }
+                })
+                .unwrap();
+        }
+
         self.sdl_renderer.copy(&self.buffer,
                                None,
                                Rect::new(0, 0, window_width, window_height).unwrap());
         self.sdl_renderer.present();
+        for pixel in &mut self.pixels {
+            *pixel = 0;
+        }
     }
 
     pub fn hline(&mut self, y: i32, mut x_min: i32, mut x_max: i32, color: RGBA) {
@@ -46,20 +72,9 @@ impl<'a> SoftwareRenderer<'a> {
         x_min = clamp(x_min, 0, self.width);
         x_max = clamp(x_max, 0, self.width);
 
-        self.buffer
-            .with_lock(None, |buffer: &mut [u8], pitch: usize| {
-                unsafe {
-                    let mut row = buffer.as_mut_ptr();
-                    row = row.offset((y as usize * pitch) as isize);
-                    let mut pixel = row as *mut u32;
-                    pixel = pixel.offset(x_min as isize);
-                    for _ in 0..(x_max - x_min) {
-                        *pixel = color.into_u32();
-                        pixel = pixel.offset(1);
-                    }
-                }
-            })
-            .unwrap();
+        for x in x_min..x_max {
+            self.pixels[(y * self.width + x) as usize] = color.into_u32();
+        }
     }
 
     pub fn vline(&mut self, x: i32, mut y_min: i32, mut y_max: i32, color: RGBA) {
@@ -70,20 +85,9 @@ impl<'a> SoftwareRenderer<'a> {
         y_min = clamp(y_min, 0, self.height);
         y_max = clamp(y_max, 0, self.height);
 
-        self.buffer
-            .with_lock(None, |buffer: &mut [u8], pitch: usize| {
-                unsafe {
-                    let mut col = buffer.as_mut_ptr();
-                    col = (col as *mut u32).offset(x as isize) as *mut u8;
-                    col = col.offset((y_min as usize * pitch) as isize);
-                    for _ in y_min..y_max {
-                        let mut pixel = col as *mut u32;
-                        *pixel = color.into_u32();
-                        col = col.offset(pitch as isize);
-                    }
-                }
-            })
-            .unwrap();
+        for y in y_min..y_max {
+            self.pixels[(y * self.width + x) as usize] = color.into_u32();
+        }
     }
 
     pub fn rect(&mut self, x_min: i32, y_min: i32, x_max: i32, y_max: i32, color: RGBA) {
@@ -103,23 +107,12 @@ impl<'a> SoftwareRenderer<'a> {
         x_max = clamp(x_max, 0, self.width);
         y_min = clamp(y_min, 0, self.height);
         y_max = clamp(y_max, 0, self.height);
-        self.buffer
-            .with_lock(None, |buffer: &mut [u8], pitch: usize| {
-                unsafe {
-                    let mut row = buffer.as_mut_ptr();
-                    row = row.offset((y_min as usize * pitch) as isize);
-                    for _ in 0..(y_max - y_min) {
-                        let mut pixel = row as *mut u32;
-                        pixel = pixel.offset(x_min as isize);
-                        for _ in 0..(x_max - x_min) {
-                            *pixel = color.into_u32();
-                            pixel = pixel.offset(1);
-                        }
-                        row = row.offset(pitch as isize);
-                    }
-                }
-            })
-            .unwrap();
+
+        for y in y_min..y_max {
+            for x in x_min..x_max {
+                self.pixels[(y * self.width + x) as usize] = color.into_u32();
+            }
+        }
     }
 }
 

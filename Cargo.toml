@@ -6,3 +6,4 @@ authors = ["Coeuvre Wong <coeuvre@gmail.com>"]
 [dependencies]
 rand = "*"
 sdl2 = "*"
+time = "*"
