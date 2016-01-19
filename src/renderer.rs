@@ -33,28 +33,14 @@ impl<'a> SoftwareRenderer<'a> {
     }
 
     pub fn present(&mut self, window_width: u32, window_height: u32) {
-        // NOTE(coeuvre): Copy pixels from memory to Texture
-        {
-            let width = self.width;
-            let height = self.height;
-            let ref pixels = self.pixels;
-            self.buffer
-                .with_lock(None, |buffer: &mut [u8], pitch: usize| {
+        self.buffer
+            .update(None,
                     unsafe {
-                        let mut row = buffer.as_mut_ptr();
-                        for y in 0..height {
-                            let mut pixel = row as *mut u32;
-                            for x in 0..width {
-                                *pixel = pixels[(y * width + x) as usize];
-                                pixel = pixel.offset(1);
-                            }
-                            row = row.offset(pitch as isize);
-                        }
-                    }
-                })
-                .unwrap();
-        }
-
+                        ::std::slice::from_raw_parts(self.pixels.as_ptr() as *const u8,
+                                                     self.pixels.len())
+                    },
+                    self.width as usize * 4)
+            .unwrap();
         self.sdl_renderer.copy(&self.buffer,
                                None,
                                Rect::new(0, 0, window_width, window_height).unwrap());
@@ -73,6 +59,7 @@ impl<'a> SoftwareRenderer<'a> {
         x_max = clamp(x_max, 0, self.width);
 
         for x in x_min..x_max {
+            let y = self.height - y - 1;
             self.pixels[(y * self.width + x) as usize] = color.into_u32();
         }
     }
@@ -86,6 +73,7 @@ impl<'a> SoftwareRenderer<'a> {
         y_max = clamp(y_max, 0, self.height);
 
         for y in y_min..y_max {
+            let y = self.height - y - 1;
             self.pixels[(y * self.width + x) as usize] = color.into_u32();
         }
     }
@@ -110,6 +98,7 @@ impl<'a> SoftwareRenderer<'a> {
 
         for y in y_min..y_max {
             for x in x_min..x_max {
+                let y = self.height - y - 1;
                 self.pixels[(y * self.width + x) as usize] = color.into_u32();
             }
         }

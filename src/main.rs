@@ -13,12 +13,42 @@ use renderer::*;
 
 mod renderer;
 
-pub struct BlockGenerator {
-    template: Vec<Vec<Vec<bool>>>,
+// TODO(coeuvre): Placeholder type for Block.
+pub type Block = ();
+
+pub struct Blocks {
+    width: usize,
+    height: usize,
+    data: Vec<Option<Block>>,
 }
 
-impl BlockGenerator {
-    pub fn new() -> BlockGenerator {
+impl Blocks {
+    pub fn new(width: usize, height: usize) -> Blocks {
+        Blocks {
+            width: width,
+            height: height,
+            data: vec![None; width * height],
+        }
+    }
+
+    pub fn from_data(width: usize, height: usize, data: Vec<Option<Block>>) -> Blocks {
+        assert!(data.len() == width * height);
+        Blocks {
+            width: width,
+            height: height,
+            data: data,
+        }
+    }
+}
+
+pub struct BlocksTemplate {
+    templates: Vec<Vec<Blocks>>,
+}
+
+impl BlocksTemplate {
+    pub fn new() -> BlocksTemplate {
+        let width = 4;
+        let height = 4;
         // NOTE(coeuvre): Bitmap data for blocks. The origin is left-bottom corner.
         //
         //   x x x x
@@ -27,62 +57,75 @@ impl BlockGenerator {
         //   o x x x
         //
         #[rustfmt_skip]
-        BlockGenerator {
-            template: vec![
+        BlocksTemplate {
+            templates: vec![
                 // Block I
                 vec![
-                    vec![
-                        false, true, false, false,
-                        false, true, false, false,
-                        false, true, false, false,
-                        false, true, false, false,
-                    ],
-                    vec![
-                        false, false, false, false,
-                        true,  true,  true,  true,
-                        false, false, false, false,
-                        false, false, false, false,
-                    ],
+                    Blocks::from_data(width, height, vec![
+                        None, Some(()), None, None,
+                        None, Some(()), None, None,
+                        None, Some(()), None, None,
+                        None, Some(()), None, None,
+                    ]),
+                    Blocks::from_data(width, height, vec![
+                        Some(()),  Some(()),  Some(()),  Some(()),
+                        None, None, None, None,
+                        None, None, None, None,
+                        None, None, None, None,
+                    ]),
                 ],
 
                 // Block O
                 vec![
-                    vec![
-                        false, false, false, false,
-                        false, true, true, false,
-                        false, true, true, false,
-                        false, false, false, false,
-                    ],
+                    Blocks::from_data(width, height, vec![
+                        None, Some(()), Some(()), None,
+                        None, Some(()), Some(()), None,
+                        None, None, None, None,
+                        None, None, None, None,
+                    ]),
                 ],
             ],
         }
     }
 
-    pub fn generate(&self) -> Block {
-        let shape = rand::random::<usize>() % self.template.len();
-        let order = rand::random::<usize>() % self.template[shape].len();
+    pub fn generate(&self) -> BlocksTemplateRef {
+        let shape = rand::random::<usize>() % self.templates.len();
+        let order_max = self.templates[shape].len();
+        let order = rand::random::<usize>() % order_max;
 
-        Block {
-            x: 0,
-            y: 0,
+        BlocksTemplateRef {
             shape: shape,
             order: order,
+            order_max: order_max,
         }
     }
 
-    pub fn data(&self, shape: usize, order: usize) -> &Vec<bool> {
-        &self.template[shape][order]
+    pub fn blocks(&self, r: &BlocksTemplateRef) -> &Blocks {
+        &self.templates[r.shape][r.order]
     }
 }
 
-pub struct Block {
-    x: i32,
-    y: i32,
+pub struct BlocksTemplateRef {
     shape: usize,
     order: usize,
+    order_max: usize,
 }
 
-impl Block {
+pub struct ActiveBlocks {
+    template: BlocksTemplateRef,
+    x: i32,
+    y: i32,
+}
+
+impl ActiveBlocks {
+    pub fn new(template: BlocksTemplateRef) -> ActiveBlocks {
+        ActiveBlocks {
+            template: template,
+            x: 0,
+            y: 0,
+        }
+    }
+
     pub fn move_to(&mut self, x: i32, y: i32) {
         self.x = x;
         self.y = y;
@@ -100,36 +143,29 @@ impl Block {
         self.x += 1;
     }
 
-    pub fn width(&self) -> usize {
-        4
-    }
-
-    pub fn height(&self) -> usize {
-        4
+    pub fn transform(&mut self) {
+        self.template.order = (self.template.order + 1) % self.template.order_max;
     }
 }
 
 pub struct Playfield {
-    width: i32,
-    height: i32,
-    static_blocks: Vec<bool>,
+    blocks: Blocks,
 
-    generator: BlockGenerator,
-    current_block: Option<Block>,
+    blocks_template: BlocksTemplate,
+
+    active_blocks: Option<ActiveBlocks>,
 
     interval: f32,
     time_remain: f32,
 }
 
 impl Playfield {
-    pub fn new(width: i32, height: i32) -> Playfield {
+    pub fn new(width: usize, height: usize) -> Playfield {
         Playfield {
-            width: width,
-            height: height,
-            static_blocks: vec![false; (width * height) as usize],
+            blocks: Blocks::new(width, height),
 
-            generator: BlockGenerator::new(),
-            current_block: None,
+            blocks_template: BlocksTemplate::new(),
+            active_blocks: None,
 
             interval: 1.0,
             time_remain: 0.0,
@@ -137,47 +173,49 @@ impl Playfield {
     }
 
     pub fn put_block(&mut self) {
-        if self.current_block.is_some() {
+        if self.active_blocks.is_some() {
             return;
         }
 
-        let mut block = self.generator.generate();
-        block.move_to(3, 19);
-        self.current_block = Some(block);
+        let r = self.blocks_template.generate();
+        let mut active_blocks = ActiveBlocks::new(r);
+        active_blocks.move_to(3, 19);
+        self.active_blocks = Some(active_blocks);
         self.time_remain = self.interval;
     }
 
-    pub fn move_current_block_left(&mut self) {
-        if let Some(ref mut current_block) = self.current_block {
-            current_block.left();
+    pub fn move_active_block_left(&mut self) {
+        if let Some(ref mut active_blocks) = self.active_blocks {
+            active_blocks.left();
         }
     }
 
-    pub fn move_current_block_right(&mut self) {
-        if let Some(ref mut current_block) = self.current_block {
-            current_block.right();
+    pub fn move_active_block_right(&mut self) {
+        if let Some(ref mut active_blocks) = self.active_blocks {
+            active_blocks.right();
         }
     }
 
-    pub fn move_current_block_down(&mut self) {
-        if let Some(ref mut current_block) = self.current_block {
-            current_block.down();
+    pub fn move_active_block_down(&mut self) {
+        if let Some(ref mut active_blocks) = self.active_blocks {
+            active_blocks.down();
         }
     }
 
-    pub fn transform_current_block(&mut self) {}
+    pub fn transform_active_block(&mut self) {
+        if let Some(ref mut active_blocks) = self.active_blocks {
+            active_blocks.transform();
+        }
+    }
 
     pub fn update(&mut self, renderer: &mut SoftwareRenderer, dt: f32, x: i32, y: i32) {
         self.time_remain -= dt;
         if self.time_remain < 0.0 {
             self.time_remain += self.interval;
-            self.move_current_block_down();
+            self.move_active_block_down();
         }
 
-        let block_size_in_pixels = 32;
-
-        let width = self.width * block_size_in_pixels;
-        let height = self.height * block_size_in_pixels;
+        let block_size_in_pixels = 32i32;
 
         let color = RGBA {
             r: 0.6,
@@ -186,18 +224,27 @@ impl Playfield {
             a: 1.0,
         };
 
-        // Current block
-        if let Some(ref mut current_block) = self.current_block {
+        macro_rules! blocks_iter {
+            ($blocks:expr) => {
+                $blocks.data
+                    .iter()
+                    .enumerate()
+                    .filter(|&(_, block)| block.is_some())
+                    .map(|(i, block)| {
+                        (i % $blocks.width, i / $blocks.width, block.unwrap())
+                    })
+            }
+        }
 
-            for (i, block) in self.generator
-                                  .data(current_block.shape, current_block.order)
-                                  .iter()
-                                  .enumerate() {
-                if *block {
-                    let col = (i % current_block.width()) as i32;
-                    let row = (i / current_block.height()) as i32;
-                    let x_offset = (current_block.x + col) * block_size_in_pixels;
-                    let y_offset = (current_block.y + row) * block_size_in_pixels;
+        // Current block
+        if let Some(ref mut active_blocks) = self.active_blocks {
+            let blocks = self.blocks_template.blocks(&active_blocks.template);
+
+            for (col, row, _) in blocks_iter!(blocks) {
+                // Simply clip the blocks
+                if active_blocks.y + (row as i32) < self.blocks.height as i32 - 2 {
+                    let x_offset = (active_blocks.x + col as i32) * block_size_in_pixels;
+                    let y_offset = (active_blocks.y + row as i32) * block_size_in_pixels;
                     let x = x + x_offset;
                     let y = y + y_offset;
                     renderer.fill_rect(x + 1,
@@ -210,30 +257,29 @@ impl Playfield {
         }
 
         // Static blocks
-        for (i, block) in self.static_blocks.iter().enumerate() {
-            if *block {
-                let col = i as i32 % self.width;
-                let row = i as i32 / self.height;
-                let x_offset = col * block_size_in_pixels;
-                let y_offset = row * block_size_in_pixels;
-                let x = x + x_offset;
-                let y = y + y_offset;
-                renderer.fill_rect(x + 1,
-                                   y + 1,
-                                   x + block_size_in_pixels,
-                                   y + block_size_in_pixels,
-                                   color);
-            }
+        for (col, row, _) in blocks_iter!(self.blocks) {
+            let x_offset = (col as i32) * block_size_in_pixels;
+            let y_offset = (row as i32) * block_size_in_pixels;
+            let x = x + x_offset;
+            let y = y + y_offset;
+            renderer.fill_rect(x + 1,
+                               y + 1,
+                               x + block_size_in_pixels,
+                               y + block_size_in_pixels,
+                               color);
         }
 
         // Grids
-        for row in 1..self.height {
-            let y_offset = row * block_size_in_pixels;
+        let width = self.blocks.width as i32 * block_size_in_pixels;
+        let height = (self.blocks.height - 2) as i32 * block_size_in_pixels;
+
+        for row in 1..self.blocks.height - 2 {
+            let y_offset = row as i32 * block_size_in_pixels;
             renderer.hline(y + y_offset, x, x + width, color);
         }
 
-        for col in 1..self.width {
-            let x_offset = col * block_size_in_pixels;
+        for col in 1..self.blocks.width {
+            let x_offset = col as i32 * block_size_in_pixels;
             renderer.vline(x + x_offset, y, y + height, color);
         }
 
@@ -246,7 +292,21 @@ impl Playfield {
         };
 
         renderer.rect(x, y, x + width, y + height, color);
+    }
+}
 
+
+pub struct Retris {
+    playfield: Playfield,
+}
+
+impl Retris {
+    pub fn new() -> Retris {
+        Retris { playfield: Playfield::new(10, 22) }
+    }
+
+    pub fn update(&mut self, renderer: &mut SoftwareRenderer, dt: f32) {
+        self.playfield.update(renderer, dt, 64, 32);
     }
 }
 
@@ -268,7 +328,7 @@ fn main() {
 
     let mut event_pump = sdl2.event_pump().unwrap();
 
-    let mut playfield = Playfield::new(10, 22);
+    let mut retris = Retris::new();
 
     let mut frame_last = PreciseTime::now();
 
@@ -280,16 +340,16 @@ fn main() {
                 Event::Quit {..} |
                 Event::KeyDown {keycode: Some(Keycode::Escape), ..} => break 'running,
                 Event::KeyDown {keycode: Some(Keycode::Space), ..} => {
-                    playfield.put_block();
+                    retris.playfield.put_block();
                 }
                 Event::KeyDown {keycode: Some(Keycode::Left), ..} => {
-                    playfield.move_current_block_left();
+                    retris.playfield.move_active_block_left();
                 }
                 Event::KeyDown {keycode: Some(Keycode::Right), ..} => {
-                    playfield.move_current_block_right();
+                    retris.playfield.move_active_block_right();
                 }
                 Event::KeyDown {keycode: Some(Keycode::Up), ..} => {
-                    playfield.transform_current_block();
+                    retris.playfield.transform_active_block();
                 }
                 _ => {}
             }
@@ -298,11 +358,11 @@ fn main() {
         let now = PreciseTime::now();
         let dt = frame_last.to(now).num_milliseconds() as f32 / 1000.0;
         frame_last = now;
-        playfield.update(&mut renderer, dt, 64, 32);
+        retris.update(&mut renderer, dt);
         renderer.present(width, height);
 
         let frame_end = PreciseTime::now();
-        let span = frame_start.to(frame_end);
-        println!("FPS: {}", (1000.0 / span.num_milliseconds() as f64) as u32);
+        let _ = frame_start.to(frame_end);
+        // println!("FPS: {}", (1000.0 / span.num_milliseconds() as f64) as u32);
     }
 }
