@@ -13,46 +13,46 @@ use renderer::*;
 
 mod renderer;
 
-// TODO(coeuvre): Placeholder type for Block.
-pub type Block = ();
+// TODO(coeuvre): Placeholder type for Cell.
+pub type Cell = ();
 
-macro_rules! blocks_iter {
-    ($blocks:expr) => {
-        $blocks.data
+macro_rules! block_iter {
+    ($block:expr) => {
+        $block.data
             .iter()
             .enumerate()
-            .filter(|&(_, block)| block.is_some())
-            .map(|(i, block)| {
-                (i % $blocks.width, i / $blocks.width, block.unwrap())
+            .filter(|&(_, cell)| cell.is_some())
+            .map(|(i, cell)| {
+                (i % $block.width, i / $block.width, cell.unwrap())
             })
     }
 }
 
-pub struct Blocks {
+pub struct Block {
     width: usize,
     height: usize,
-    data: Vec<Option<Block>>,
+    data: Vec<Option<Cell>>,
 }
 
-impl Blocks {
-    pub fn new(width: usize, height: usize) -> Blocks {
-        Blocks {
+impl Block {
+    pub fn new(width: usize, height: usize) -> Block {
+        Block {
             width: width,
             height: height,
             data: vec![None; width * height],
         }
     }
 
-    pub fn from_data(width: usize, height: usize, data: Vec<Option<Block>>) -> Blocks {
+    pub fn from_data(width: usize, height: usize, data: Vec<Option<Cell>>) -> Block {
         assert!(data.len() == width * height);
-        Blocks {
+        Block {
             width: width,
             height: height,
             data: data,
         }
     }
 
-    pub fn get(&self, x: usize, y: usize) -> Option<&Block> {
+    pub fn get(&self, x: usize, y: usize) -> Option<&Cell> {
         if x >= self.width || y >= self.height {
             return None;
         }
@@ -60,27 +60,27 @@ impl Blocks {
         self.data[y * self.width + x].as_ref()
     }
 
-    pub fn set(&mut self, x: usize, y: usize, block: Option<Block>) {
-        self.data[y * self.width + x] = block;
+    pub fn set(&mut self, x: usize, y: usize, cell: Option<Cell>) {
+        self.data[y * self.width + x] = cell;
     }
 
-    pub fn set_with_block(&mut self, x: usize, y: usize, block: Block) {
-        self.set(x, y, Some(block));
+    pub fn set_with_cell(&mut self, x: usize, y: usize, cell: Cell) {
+        self.set(x, y, Some(cell));
     }
 
-    pub fn set_with_blocks(&mut self, x: i32, y: i32, blocks: &Blocks) {
-        for (col, row, block) in blocks_iter!(blocks) {
-            self.set_with_block((x + col as i32) as usize, (y + row as i32) as usize, block);
+    pub fn set_with_block(&mut self, x: i32, y: i32, block: &Block) {
+        for (col, row, cell) in block_iter!(block) {
+            self.set_with_cell((x + col as i32) as usize, (y + row as i32) as usize, cell);
         }
     }
 }
 
-pub struct BlocksTemplate {
-    templates: Vec<Vec<Blocks>>,
+pub struct BlockTemplate {
+    templates: Vec<Vec<Block>>,
 }
 
-impl BlocksTemplate {
-    pub fn new() -> BlocksTemplate {
+impl BlockTemplate {
+    pub fn new() -> BlockTemplate {
         let width = 4;
         let height = 4;
         // NOTE(coeuvre): Bitmap data for blocks. The origin is left-bottom corner.
@@ -91,17 +91,17 @@ impl BlocksTemplate {
         //   o x x x
         //
         #[rustfmt_skip]
-        BlocksTemplate {
+        BlockTemplate {
             templates: vec![
                 // Block I
                 vec![
-                    Blocks::from_data(width, height, vec![
+                    Block::from_data(width, height, vec![
                         None, Some(()), None, None,
                         None, Some(()), None, None,
                         None, Some(()), None, None,
                         None, Some(()), None, None,
                     ]),
-                    Blocks::from_data(width, height, vec![
+                    Block::from_data(width, height, vec![
                         Some(()),  Some(()),  Some(()),  Some(()),
                         None, None, None, None,
                         None, None, None, None,
@@ -111,7 +111,7 @@ impl BlocksTemplate {
 
                 // Block O
                 vec![
-                    Blocks::from_data(width, height, vec![
+                    Block::from_data(width, height, vec![
                         None, Some(()), Some(()), None,
                         None, Some(()), Some(()), None,
                         None, None, None, None,
@@ -122,38 +122,38 @@ impl BlocksTemplate {
         }
     }
 
-    pub fn generate(&self) -> BlocksTemplateRef {
+    pub fn generate(&self) -> BlockTemplateRef {
         let shape = rand::random::<usize>() % self.templates.len();
         let order_max = self.templates[shape].len();
         let order = rand::random::<usize>() % order_max;
 
-        BlocksTemplateRef {
+        BlockTemplateRef {
             shape: shape,
             order: order,
             order_max: order_max,
         }
     }
 
-    pub fn blocks(&self, r: &BlocksTemplateRef) -> &Blocks {
+    pub fn block(&self, r: &BlockTemplateRef) -> &Block {
         &self.templates[r.shape][r.order]
     }
 }
 
-pub struct BlocksTemplateRef {
+pub struct BlockTemplateRef {
     shape: usize,
     order: usize,
     order_max: usize,
 }
 
-pub struct ActiveBlocks {
-    template: BlocksTemplateRef,
+pub struct ActiveBlock {
+    template: BlockTemplateRef,
     x: i32,
     y: i32,
 }
 
-impl ActiveBlocks {
-    pub fn new(template: BlocksTemplateRef) -> ActiveBlocks {
-        ActiveBlocks {
+impl ActiveBlock {
+    pub fn new(template: BlockTemplateRef) -> ActiveBlock {
+        ActiveBlock {
             template: template,
             x: 0,
             y: 0,
@@ -187,11 +187,11 @@ impl ActiveBlocks {
 }
 
 pub struct Playfield {
-    blocks: Blocks,
+    block: Block,
 
-    blocks_template: BlocksTemplate,
+    block_template: BlockTemplate,
 
-    active_blocks: Option<ActiveBlocks>,
+    active_block: Option<ActiveBlock>,
 
     interval: f32,
     time_remain: f32,
@@ -200,94 +200,94 @@ pub struct Playfield {
 impl Playfield {
     pub fn new(width: usize, height: usize) -> Playfield {
         Playfield {
-            blocks: Blocks::new(width, height),
+            block: Block::new(width, height),
 
-            blocks_template: BlocksTemplate::new(),
-            active_blocks: None,
+            block_template: BlockTemplate::new(),
+            active_block: None,
 
             interval: 1.0,
             time_remain: 0.0,
         }
     }
 
-    pub fn set_active_blocks(&mut self) {
-        if self.active_blocks.is_some() {
+    pub fn set_active_block(&mut self) {
+        if self.active_block.is_some() {
             return;
         }
 
-        let r = self.blocks_template.generate();
-        let mut active_blocks = ActiveBlocks::new(r);
-        active_blocks.move_to(3, 19);
-        self.active_blocks = Some(active_blocks);
+        let r = self.block_template.generate();
+        let mut active_block = ActiveBlock::new(r);
+        active_block.move_to(3, 19);
+        self.active_block = Some(active_block);
         self.time_remain = self.interval;
     }
 
-    pub fn move_active_blocks_left(&mut self) {
-        if let Some(ref mut active_blocks) = self.active_blocks {
-            active_blocks.left();
+    pub fn move_active_block_left(&mut self) {
+        if let Some(ref mut active_block) = self.active_block {
+            active_block.left();
 
-            let blocks = self.blocks_template.blocks(&active_blocks.template);
+            let block = self.block_template.block(&active_block.template);
             let mut is_collide = false;
-            let mut min_x = self.blocks.width as i32;
-            for (col, row, _) in blocks_iter!(blocks) {
-                let x = active_blocks.x + col as i32;
-                let y = active_blocks.y + row as i32;
+            let mut min_x = self.block.width as i32;
+            for (col, row, _) in block_iter!(block) {
+                let x = active_block.x + col as i32;
+                let y = active_block.y + row as i32;
 
                 min_x = std::cmp::min(x, min_x);
 
-                if self.blocks.get(x as usize, y as usize).is_some() {
+                if self.block.get(x as usize, y as usize).is_some() {
                     is_collide = true;
                     break;
                 }
             }
 
             if min_x < 0 || is_collide {
-                active_blocks.right();
+                active_block.right();
             }
         }
     }
 
-    pub fn move_active_blocks_right(&mut self) {
-        if let Some(ref mut active_blocks) = self.active_blocks {
-            active_blocks.right();
+    pub fn move_active_block_right(&mut self) {
+        if let Some(ref mut active_block) = self.active_block {
+            active_block.right();
 
-            let blocks = self.blocks_template.blocks(&active_blocks.template);
+            let block = self.block_template.block(&active_block.template);
             let mut is_collide = false;
             let mut max_x = -1;
-            for (col, row, _) in blocks_iter!(blocks) {
-                let x = active_blocks.x + col as i32;
-                let y = active_blocks.y + row as i32;
+            for (col, row, _) in block_iter!(block) {
+                let x = active_block.x + col as i32;
+                let y = active_block.y + row as i32;
 
                 max_x = std::cmp::max(x, max_x);
 
-                if self.blocks.get(x as usize, y as usize).is_some() {
+                if self.block.get(x as usize, y as usize).is_some() {
                     is_collide = true;
                     break;
                 }
             }
 
-            if max_x >= self.blocks.width as i32 || is_collide {
-                active_blocks.left();
+            if max_x >= self.block.width as i32 || is_collide {
+                active_block.left();
             }
         }
     }
 
-    fn put_active_blocks(&mut self) {
-        if let Some(ref mut active_blocks) = self.active_blocks {
-            let blocks = self.blocks_template.blocks(&active_blocks.template);
-            self.blocks.set_with_blocks(active_blocks.x, active_blocks.y, blocks);
+    fn put_active_block(&mut self) {
+        if let Some(ref mut active_block) = self.active_block {
+            let block = self.block_template.block(&active_block.template);
+            self.block.set_with_block(active_block.x, active_block.y, block);
         }
 
-        self.active_blocks = None;
+        self.active_block = None;
 
         let mut rows_need_remove = vec![];
-        for row in 0..self.blocks.height {
+        for row in 0..self.block.height {
             let mut row_is_empty = true;
             let mut row_need_remove = true;
 
-            for col in 0..self.blocks.width {
+            for col in 0..self.block.width {
                 row_is_empty = false;
-                let block = self.blocks.get(col, row);
+                let block = self.block.get(col, row);
                 if block.is_none() {
                     row_need_remove = false;
                     break;
@@ -301,54 +301,54 @@ impl Playfield {
 
         rows_need_remove.reverse();
         for row in rows_need_remove {
-            for row in row + 1..self.blocks.height {
-                for col in 0..self.blocks.width {
-                    let block = self.blocks.get(col, row).map(|b| b.clone());
-                    self.blocks.set(col, row - 1, block);
+            for row in row + 1..self.block.height {
+                for col in 0..self.block.width {
+                    let block = self.block.get(col, row).map(|b| b.clone());
+                    self.block.set(col, row - 1, block);
                 }
             }
         }
     }
 
-    pub fn move_active_blocks_down(&mut self) {
+    pub fn move_active_block_down(&mut self) {
         self.time_remain = self.interval;
 
         let mut is_collide = false;
 
-        if let Some(ref mut active_blocks) = self.active_blocks {
-            active_blocks.down();
+        if let Some(ref mut active_block) = self.active_block {
+            active_block.down();
 
-            let blocks = self.blocks_template.blocks(&active_blocks.template);
-            for (col, row, _) in blocks_iter!(blocks) {
-                let x = active_blocks.x + col as i32;
-                let y = active_blocks.y + row as i32;
-                if y == -1 || self.blocks.get(x as usize, y as usize).is_some() {
+            let block = self.block_template.block(&active_block.template);
+            for (col, row, _) in block_iter!(block) {
+                let x = active_block.x + col as i32;
+                let y = active_block.y + row as i32;
+                if y == -1 || self.block.get(x as usize, y as usize).is_some() {
                     is_collide = true;
                     break;
                 }
             }
 
             if is_collide {
-                active_blocks.up();
+                active_block.up();
             }
         }
 
         if is_collide {
-            self.put_active_blocks();
-            self.set_active_blocks();
+            self.put_active_block();
+            self.set_active_block();
         }
     }
 
-    pub fn transform_active_blocks(&mut self) {
-        if let Some(ref mut active_blocks) = self.active_blocks {
-            active_blocks.transform();
+    pub fn transform_active_block(&mut self) {
+        if let Some(ref mut active_block) = self.active_block {
+            active_block.transform();
         }
     }
 
     pub fn update(&mut self, renderer: &mut SoftwareRenderer, dt: f32, x: i32, y: i32) {
         self.time_remain -= dt;
         if self.time_remain < 0.0 {
-            self.move_active_blocks_down();
+            self.move_active_block_down();
         }
 
         let block_size_in_pixels = 32i32;
@@ -361,14 +361,14 @@ impl Playfield {
         };
 
         // Current block
-        if let Some(ref mut active_blocks) = self.active_blocks {
-            let blocks = self.blocks_template.blocks(&active_blocks.template);
+        if let Some(ref mut active_block) = self.active_block {
+            let block = self.block_template.block(&active_block.template);
 
-            for (col, row, _) in blocks_iter!(blocks) {
-                // Simply clip the blocks
-                if active_blocks.y + (row as i32) < self.blocks.height as i32 - 2 {
-                    let x_offset = (active_blocks.x + col as i32) * block_size_in_pixels;
-                    let y_offset = (active_blocks.y + row as i32) * block_size_in_pixels;
+            for (col, row, _) in block_iter!(block) {
+                // Simply clip the block
+                if active_block.y + (row as i32) < self.block.height as i32 - 2 {
+                    let x_offset = (active_block.x + col as i32) * block_size_in_pixels;
+                    let y_offset = (active_block.y + row as i32) * block_size_in_pixels;
                     let x = x + x_offset;
                     let y = y + y_offset;
                     renderer.fill_rect(x + 1,
@@ -380,8 +380,8 @@ impl Playfield {
             }
         }
 
-        // Static blocks
-        for (col, row, _) in blocks_iter!(self.blocks) {
+        // Fixed cells
+        for (col, row, _) in block_iter!(self.block) {
             let x_offset = (col as i32) * block_size_in_pixels;
             let y_offset = (row as i32) * block_size_in_pixels;
             let x = x + x_offset;
@@ -394,15 +394,15 @@ impl Playfield {
         }
 
         // Grids
-        let width = self.blocks.width as i32 * block_size_in_pixels;
-        let height = (self.blocks.height - 2) as i32 * block_size_in_pixels;
+        let width = self.block.width as i32 * block_size_in_pixels;
+        let height = (self.block.height - 2) as i32 * block_size_in_pixels;
 
-        for row in 1..self.blocks.height - 2 {
+        for row in 1..self.block.height - 2 {
             let y_offset = row as i32 * block_size_in_pixels;
             renderer.hline(y + y_offset, x, x + width, color);
         }
 
-        for col in 1..self.blocks.width {
+        for col in 1..self.block.width {
             let x_offset = col as i32 * block_size_in_pixels;
             renderer.vline(x + x_offset, y, y + height, color);
         }
@@ -464,19 +464,19 @@ fn main() {
                 Event::Quit {..} |
                 Event::KeyDown {keycode: Some(Keycode::Escape), ..} => break 'running,
                 Event::KeyDown {keycode: Some(Keycode::Space), ..} => {
-                    retris.playfield.set_active_blocks();
+                    retris.playfield.set_active_block();
                 }
                 Event::KeyDown {keycode: Some(Keycode::Left), ..} => {
-                    retris.playfield.move_active_blocks_left();
+                    retris.playfield.move_active_block_left();
                 }
                 Event::KeyDown {keycode: Some(Keycode::Right), ..} => {
-                    retris.playfield.move_active_blocks_right();
+                    retris.playfield.move_active_block_right();
                 }
                 Event::KeyDown {keycode: Some(Keycode::Up), ..} => {
-                    retris.playfield.transform_active_blocks();
+                    retris.playfield.transform_active_block();
                 }
                 Event::KeyDown {keycode: Some(Keycode::Down), ..} => {
-                    retris.playfield.move_active_blocks_down();
+                    retris.playfield.move_active_block_down();
                 }
                 _ => {}
             }
