@@ -81,8 +81,6 @@ pub struct BlockTemplate {
 
 impl BlockTemplate {
     pub fn new() -> BlockTemplate {
-        let width = 4;
-        let height = 4;
         // NOTE(coeuvre): Bitmap data for blocks. The origin is left-bottom corner.
         //
         //   x x x x
@@ -90,32 +88,165 @@ impl BlockTemplate {
         //   x x x x
         //   o x x x
         //
+        //   Using SRS described at http://tetris.wikia.com/wiki/SRS.
+        //
         #[rustfmt_skip]
         BlockTemplate {
             templates: vec![
-                // Block I
+                // Cyan I
                 vec![
-                    Block::from_data(width, height, vec![
-                        None, Some(()), None, None,
-                        None, Some(()), None, None,
-                        None, Some(()), None, None,
-                        None, Some(()), None, None,
+                    Block::from_data(4, 4, vec![
+                        None, None, None, None,
+                        None, None, None, None,
+                        Some(()),  Some(()),  Some(()),  Some(()),
+                        None, None, None, None,
                     ]),
-                    Block::from_data(width, height, vec![
+                    Block::from_data(4, 4, vec![
+                        None, None, Some(()), None,
+                        None, None, Some(()), None,
+                        None, None, Some(()), None,
+                        None, None, Some(()), None,
+                    ]),
+                    Block::from_data(4, 4, vec![
+                        None, None, None, None,
                         Some(()),  Some(()),  Some(()),  Some(()),
                         None, None, None, None,
                         None, None, None, None,
-                        None, None, None, None,
+                    ]),
+                    Block::from_data(4, 4, vec![
+                        None, Some(()), None, None,
+                        None, Some(()), None, None,
+                        None, Some(()), None, None,
+                        None, Some(()), None, None,
                     ]),
                 ],
 
-                // Block O
+                // Yellow O
                 vec![
-                    Block::from_data(width, height, vec![
+                    Block::from_data(4, 3, vec![
+                        None, None, None, None,
                         None, Some(()), Some(()), None,
                         None, Some(()), Some(()), None,
-                        None, None, None, None,
-                        None, None, None, None,
+                    ]),
+                ],
+
+                // Purple T
+                vec![
+                    Block::from_data(3, 3, vec![
+                        None, None, None,
+                        Some(()), Some(()), Some(()),
+                        None, Some(()), None,
+                    ]),
+                    Block::from_data(3, 3, vec![
+                        None, Some(()), None,
+                        None, Some(()), Some(()),
+                        None, Some(()), None,
+                    ]),
+                    Block::from_data(3, 3, vec![
+                        None, Some(()), None,
+                        Some(()), Some(()), Some(()),
+                        None, None, None,
+                    ]),
+                    Block::from_data(3, 3, vec![
+                        None, Some(()), None,
+                        Some(()), Some(()), None,
+                        None, Some(()), None,
+                    ]),
+                ],
+
+                // Green S
+                vec![
+                    Block::from_data(3, 3, vec![
+                        None, None, None,
+                        Some(()), Some(()), None,
+                        None, Some(()), Some(()),
+                    ]),
+                    Block::from_data(3, 3, vec![
+                        None, None, Some(()),
+                        None, Some(()), Some(()),
+                        None, Some(()), None,
+                    ]),
+                    Block::from_data(3, 3, vec![
+                        Some(()), Some(()), None,
+                        None, Some(()), Some(()),
+                        None, None, None,
+                    ]),
+                    Block::from_data(3, 3, vec![
+                        None, Some(()), None,
+                        Some(()), Some(()), None,
+                        Some(()), None, None,
+                    ]),
+                ],
+
+                // Red Z
+                vec![
+                    Block::from_data(3, 3, vec![
+                        None, None, None,
+                        None, Some(()), Some(()),
+                        Some(()), Some(()), None,
+                    ]),
+                    Block::from_data(3, 3, vec![
+                        None, Some(()), None,
+                        None, Some(()), Some(()),
+                        None, None, Some(()),
+                    ]),
+                    Block::from_data(3, 3, vec![
+                        None, Some(()), Some(()),
+                        Some(()), Some(()), None,
+                        None, None, None,
+                    ]),
+                    Block::from_data(3, 3, vec![
+                        Some(()), None, None,
+                        Some(()), Some(()), None,
+                        None, Some(()), None,
+                    ]),
+                ],
+
+                // Blue J
+                vec![
+                    Block::from_data(3, 3, vec![
+                        None, None, None,
+                        Some(()), Some(()), Some(()),
+                        Some(()), None, None,
+                    ]),
+                    Block::from_data(3, 3, vec![
+                        None, Some(()), None,
+                        None, Some(()), None,
+                        None, Some(()), Some(()),
+                    ]),
+                    Block::from_data(3, 3, vec![
+                        None, None, Some(()),
+                        Some(()), Some(()), Some(()),
+                        None, None, None,
+                    ]),
+                    Block::from_data(3, 3, vec![
+                        Some(()), Some(()), None,
+                        None, Some(()), None,
+                        None, Some(()), None,
+                    ]),
+                ],
+
+                // Orange L
+                vec![
+                    Block::from_data(3, 3, vec![
+                        None, None, None,
+                        Some(()), Some(()), Some(()),
+                        None, None, Some(()),
+                    ]),
+                    Block::from_data(3, 3, vec![
+                        None, Some(()), Some(()),
+                        None, Some(()), None,
+                        None, Some(()), None,
+                    ]),
+                    Block::from_data(3, 3, vec![
+                        Some(()), None, None,
+                        Some(()), Some(()), Some(()),
+                        None, None, None,
+                    ]),
+                    Block::from_data(3, 3, vec![
+                        None, Some(()), None,
+                        None, Some(()), None,
+                        Some(()), Some(()), None,
                     ]),
                 ],
             ],
@@ -124,8 +255,8 @@ impl BlockTemplate {
 
     pub fn generate(&self) -> BlockTemplateRef {
         let shape = rand::random::<usize>() % self.templates.len();
+        let order = 0;
         let order_max = self.templates[shape].len();
-        let order = rand::random::<usize>() % order_max;
 
         BlockTemplateRef {
             shape: shape,
@@ -181,7 +312,7 @@ impl ActiveBlock {
         self.x += 1;
     }
 
-    pub fn transform(&mut self) {
+    pub fn rotate(&mut self) {
         self.template.order = (self.template.order + 1) % self.template.order_max;
     }
 }
@@ -339,9 +470,9 @@ impl Playfield {
         }
     }
 
-    pub fn transform_active_block(&mut self) {
+    pub fn rotate_active_block(&mut self) {
         if let Some(ref mut active_block) = self.active_block {
-            active_block.transform();
+            active_block.rotate();
         }
     }
 
@@ -473,7 +604,7 @@ fn main() {
                     retris.playfield.move_active_block_right();
                 }
                 Event::KeyDown {keycode: Some(Keycode::Up), ..} => {
-                    retris.playfield.transform_active_block();
+                    retris.playfield.rotate_active_block();
                 }
                 Event::KeyDown {keycode: Some(Keycode::Down), ..} => {
                     retris.playfield.move_active_block_down();
