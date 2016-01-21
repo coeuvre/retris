@@ -63,7 +63,9 @@ impl Block {
     }
 
     pub fn set(&mut self, x: usize, y: usize, cell: Option<Cell>) {
-        self.data[y * self.width + x] = cell;
+        if x < self.width && y < self.height {
+            self.data[y * self.width + x] = cell;
+        }
     }
 
     pub fn set_with_cell(&mut self, x: usize, y: usize, cell: Cell) {
@@ -442,7 +444,7 @@ impl BlockTemplate {
     }
 }
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub struct BlockTemplateRef {
     shape: usize,
     order: usize,
@@ -516,7 +518,8 @@ pub struct Playfield {
 
     block_template: BlockTemplate,
 
-    falling_block: Option<FallingBlock>,
+    falling_block: FallingBlock,
+    next_templates: Vec<BlockTemplateRef>,
 
     held_template: Option<BlockTemplateRef>,
     can_hold_falling_block: bool,
@@ -527,12 +530,22 @@ pub struct Playfield {
 
 impl Playfield {
     pub fn new(width: usize, height: usize) -> Playfield {
+        let block_template = BlockTemplate::new();
+        let falling_block = Playfield::generate_falling_block(&block_template);
+        let next_templates = vec![
+            block_template.generate(),
+            block_template.generate(),
+            block_template.generate(),
+        ];
+
         Playfield {
             block: Block::new(width, height),
 
-            block_template: BlockTemplate::new(),
+            block_template: block_template,
 
-            falling_block: None,
+            falling_block: falling_block,
+            next_templates: next_templates,
+
             held_template: None,
             can_hold_falling_block: true,
 
@@ -542,66 +555,64 @@ impl Playfield {
     }
 
     pub fn set_falling_block(&mut self) {
-        let template = self.block_template.generate();
+        let template = self.next_templates.remove(0);
+        self.next_templates.push(self.block_template.generate());
         self.set_falling_block_with_template(template);
     }
 
     fn set_falling_block_with_template(&mut self, template: BlockTemplateRef) {
-        let mut falling_block = FallingBlock::new(template);
-        falling_block.move_to(3, 19);
-        self.falling_block = Some(falling_block);
+        self.falling_block = Playfield::generate_falling_block_with_template(template);
         self.time_remain = self.interval;
     }
 
-    fn lock_falling_block(&mut self) {
-        if self.falling_block.is_none() {
-            return;
-        }
+    fn generate_falling_block(block_template: &BlockTemplate) -> FallingBlock {
+        let template = block_template.generate();
+        Playfield::generate_falling_block_with_template(template)
+    }
 
-        let x =self.falling_block.as_ref().unwrap().x;
-        let y =self.falling_block.as_ref().unwrap().y;
+    fn generate_falling_block_with_template(template: BlockTemplateRef) -> FallingBlock{
+        let mut falling_block = FallingBlock::new(template);
+        falling_block.move_to(3, 19);
+        falling_block
+    }
+
+    fn lock_falling_block(&mut self) {
+        let x = self.falling_block.x;
+        let y =self.falling_block.y;
         self.lock_falling_block_at(x, y);
     }
 
     fn lock_falling_block_at(&mut self, x: i32, y: i32) {
-        if self.falling_block.is_none() {
-            return;
-        }
-
         self.block.lock_block(
             x, y,
-            self.block_template.block(&self.falling_block.as_ref().unwrap().template)
+            self.block_template.block(&self.falling_block.template)
         );
         self.can_hold_falling_block = true;
         self.set_falling_block();
     }
 
     pub fn move_falling_block(&mut self, movement: Movement) {
-        if self.falling_block.is_none() {
-            return;
-        }
-
-        let x = self.falling_block.as_ref().unwrap().x;
-        let y = self.falling_block.as_ref().unwrap().y;
-        let template = self.falling_block.as_ref().unwrap().template.clone();
+        let x = self.falling_block.x;
+        let y = self.falling_block.y;
+        let template = self.falling_block.template;
 
         match movement {
             Movement::Left => {
                 let block = self.block_template.block(&template);
                 if self.block.is_valid_position(x - 1, y, block) {
-                    self.falling_block.as_mut().unwrap().left();
+                    self.falling_block.left();
                 }
             }
             Movement::Right => {
                 let block = self.block_template.block(&template);
                 if self.block.is_valid_position(x + 1, y, block) {
-                    self.falling_block.as_mut().unwrap().right();
+                    self.falling_block.right();
                 }
             }
             Movement::Down => {
                 self.time_remain = self.interval;
                 if self.block.is_valid_position(x, y - 1, self.block_template.block(&template)) {
-                    self.falling_block.as_mut().unwrap().down();
+                    self.falling_block.down();
                 } else {
                     self.lock_falling_block();
                 }
@@ -611,7 +622,7 @@ impl Playfield {
                 self.lock_falling_block_at(x, y);
             }
             Movement::RRotate | Movement::LRotate => {
-                let mut new_template = template.clone();
+                let mut new_template = template;
                 match movement {
                     Movement::RRotate => new_template.rrotate(),
                     Movement::LRotate => new_template.lrotate(),
@@ -623,16 +634,16 @@ impl Playfield {
                     let x = x + dx;
                     let y = y + dy;
                     if self.block.is_valid_position(x, y, block) {
-                        self.falling_block.as_mut().unwrap().x = x;
-                        self.falling_block.as_mut().unwrap().y = y;
-                        self.falling_block.as_mut().unwrap().template = new_template;
+                        self.falling_block.x = x;
+                        self.falling_block.y = y;
+                        self.falling_block.template = new_template;
                         break;
                     }
                 }
             }
             Movement::Hold => {
                 if self.can_hold_falling_block {
-                    let mut held_template = template.clone();
+                    let mut held_template = template;
                     held_template.order = 0;
                     if self.held_template.is_none() {
                         self.set_falling_block();
@@ -654,15 +665,18 @@ impl Playfield {
         }
 
         let block_size_in_pixels = 32i32;
+        let width = self.block.width as i32 * block_size_in_pixels;
+        let height = (self.block.height - 2) as i32 * block_size_in_pixels;
 
+        // Held template
         if let Some(ref mut held_template) = self.held_template {
             let block = self.block_template.block(&held_template);
 
             for (col, row, cell) in block_iter!(block) {
                 let x_offset = col as i32 * block_size_in_pixels;
-                let y_offset = row as i32 * block_size_in_pixels;
+                let y_offset = (block.height - row) as i32 * block_size_in_pixels;
                 let x = x + x_offset;
-                let y = y + y_offset;
+                let y = y + (height - y_offset);
                 renderer.fill_rect(x + 1,
                                    y + 1,
                                    x + block_size_in_pixels,
@@ -671,39 +685,38 @@ impl Playfield {
             }
         }
 
+
         let x = x + 5 * block_size_in_pixels;
 
         // Falling block
-        if let Some(ref mut falling_block) = self.falling_block {
-            let block = self.block_template.block(&falling_block.template);
-            let (ghost_x, ghost_y) = self.block.get_ghost_block_pos(falling_block.x, falling_block.y, block);
+        let block = self.block_template.block(&self.falling_block.template);
+        let (ghost_x, ghost_y) = self.block.get_ghost_block_pos(self.falling_block.x, self.falling_block.y, block);
 
-            for (col, row, cell) in block_iter!(block) {
-                // Ghost
-                {
-                    let x_offset = (ghost_x + col as i32) * block_size_in_pixels;
-                    let y_offset = (ghost_y + row as i32) * block_size_in_pixels;
-                    let x = x + x_offset;
-                    let y = y + y_offset;
-                    renderer.rect(x + 1,
-                                  y + 1,
-                                  x + block_size_in_pixels - 1,
-                                  y + block_size_in_pixels - 1,
-                                  cell.color);
-                }
+        for (col, row, cell) in block_iter!(block) {
+            // Ghost
+            {
+                let x_offset = (ghost_x + col as i32) * block_size_in_pixels;
+                let y_offset = (ghost_y + row as i32) * block_size_in_pixels;
+                let x = x + x_offset;
+                let y = y + y_offset;
+                renderer.rect(x + 1,
+                              y + 1,
+                              x + block_size_in_pixels - 1,
+                              y + block_size_in_pixels - 1,
+                              cell.color);
+            }
 
-                // Simply clip the block
-                if falling_block.y + (row as i32) < self.block.height as i32 - 2 {
-                    let x_offset = (falling_block.x + col as i32) * block_size_in_pixels;
-                    let y_offset = (falling_block.y + row as i32) * block_size_in_pixels;
-                    let x = x + x_offset;
-                    let y = y + y_offset;
-                    renderer.fill_rect(x + 1,
-                                       y + 1,
-                                       x + block_size_in_pixels,
-                                       y + block_size_in_pixels,
-                                       cell.color);
-                }
+            // Simply clip the block
+            if self.falling_block.y + (row as i32) < self.block.height as i32 - 2 {
+                let x_offset = (self.falling_block.x + col as i32) * block_size_in_pixels;
+                let y_offset = (self.falling_block.y + row as i32) * block_size_in_pixels;
+                let x = x + x_offset;
+                let y = y + y_offset;
+                renderer.fill_rect(x + 1,
+                                   y + 1,
+                                   x + block_size_in_pixels,
+                                   y + block_size_in_pixels,
+                                   cell.color);
             }
         }
 
@@ -728,8 +741,6 @@ impl Playfield {
         };
 
         // Grids
-        let width = self.block.width as i32 * block_size_in_pixels;
-        let height = (self.block.height - 2) as i32 * block_size_in_pixels;
 
         for row in 1..self.block.height - 2 {
             let y_offset = row as i32 * block_size_in_pixels;
@@ -750,6 +761,24 @@ impl Playfield {
         };
 
         renderer.rect(x, y, x + width, y + height, color);
+
+        // Next templates
+        let x = x + width + block_size_in_pixels;
+        for (i, template) in self.next_templates.iter().enumerate() {
+            let block = self.block_template.block(template);
+
+            for (col, row, cell) in block_iter!(block) {
+                let x_offset = col as i32 * block_size_in_pixels;
+                let y_offset = (block.height - row) as i32 * block_size_in_pixels;
+                let x = x + x_offset;
+                let y = y + (height - y_offset) - i as i32 * 4 * block_size_in_pixels;
+                renderer.fill_rect(x + 1,
+                                   y + 1,
+                                   x + block_size_in_pixels,
+                                   y + block_size_in_pixels,
+                                   cell.color);
+            }
+        }
     }
 }
 
@@ -772,7 +801,7 @@ fn main() {
     let sdl2 = sdl2::init().unwrap();
     let video = sdl2.video().unwrap();
 
-    let width = 600;
+    let width = 800;
     let height = 800;
     let window = video.window("Retris", width, height)
                       .position_centered()
