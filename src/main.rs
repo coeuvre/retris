@@ -54,6 +54,14 @@ impl Block {
         }
     }
 
+    pub fn bottom(&self) -> usize {
+        for (_, row, _) in block_iter!(self) {
+            return row;
+        }
+
+        unreachable!();
+    }
+
     pub fn get(&self, x: usize, y: usize) -> Option<&Cell> {
         if x >= self.width || y >= self.height {
             return None;
@@ -90,6 +98,20 @@ impl Block {
         }
 
         true
+    }
+
+    pub fn is_out_of_bounds(&self, x: i32, y: i32, block: &Block) -> bool {
+        for (col, row, _) in block_iter!(block) {
+            let x = x + col as i32;
+            let y = y + row as i32;
+
+            if x < 0 || x >= self.width as i32 ||
+               y < 0 || y >= self.height as i32 {
+                return true;
+            }
+        }
+
+        false
     }
 
     pub fn lock_block(&mut self, x: i32, y: i32, block: &Block) {
@@ -526,6 +548,8 @@ pub struct Playfield {
 
     interval: f32,
     time_remain: f32,
+
+    is_lost: bool,
 }
 
 impl Playfield {
@@ -550,48 +574,67 @@ impl Playfield {
             can_hold_falling_block: true,
 
             interval: 1.0,
-            time_remain: 0.0,
+            time_remain: 1.0,
+
+            is_lost: false,
         }
     }
 
-    pub fn set_falling_block(&mut self) {
+    fn spawn_falling_block(&mut self) {
         let template = self.next_templates.remove(0);
         self.next_templates.push(self.block_template.generate());
-        self.set_falling_block_with_template(template);
+        self.spawn_falling_block_with_template(template);
     }
 
-    fn set_falling_block_with_template(&mut self, template: BlockTemplateRef) {
-        self.falling_block = Playfield::generate_falling_block_with_template(template);
+    fn spawn_falling_block_with_template(&mut self, template: BlockTemplateRef) {
+        self.falling_block = Playfield::generate_falling_block_with_template(&self.block_template, template);
         self.time_remain = self.interval;
+        // Block out
+        if !self.block.is_valid_position(self.falling_block.x,
+                                         self.falling_block.y,
+                                         self.block_template.block(&self.falling_block.template)) {
+            self.is_lost = true;
+        }
     }
 
     fn generate_falling_block(block_template: &BlockTemplate) -> FallingBlock {
         let template = block_template.generate();
-        Playfield::generate_falling_block_with_template(template)
+        Playfield::generate_falling_block_with_template(block_template, template)
     }
 
-    fn generate_falling_block_with_template(template: BlockTemplateRef) -> FallingBlock{
+    fn generate_falling_block_with_template(block_template: &BlockTemplate,
+                                            template: BlockTemplateRef) -> FallingBlock{
         let mut falling_block = FallingBlock::new(template);
-        falling_block.move_to(3, 19);
+        let bottom = block_template.block(&falling_block.template).bottom();
+        falling_block.move_to(3, 20 - bottom as i32);
         falling_block
     }
 
     fn lock_falling_block(&mut self) {
         let x = self.falling_block.x;
-        let y =self.falling_block.y;
+        let y = self.falling_block.y;
         self.lock_falling_block_at(x, y);
     }
 
     fn lock_falling_block_at(&mut self, x: i32, y: i32) {
-        self.block.lock_block(
-            x, y,
-            self.block_template.block(&self.falling_block.template)
-        );
+        {
+            let block = self.block_template.block(&self.falling_block.template);
+            // Partial lock out
+            if self.block.is_out_of_bounds(x, y, block) {
+                self.is_lost = true;
+                return;
+            }
+            self.block.lock_block(x, y, block);
+        }
         self.can_hold_falling_block = true;
-        self.set_falling_block();
+        self.spawn_falling_block();
     }
 
     pub fn move_falling_block(&mut self, movement: Movement) {
+        if self.is_lost {
+            return;
+        }
+
         let x = self.falling_block.x;
         let y = self.falling_block.y;
         let template = self.falling_block.template;
@@ -646,10 +689,10 @@ impl Playfield {
                     let mut held_template = template;
                     held_template.order = 0;
                     if self.held_template.is_none() {
-                        self.set_falling_block();
+                        self.spawn_falling_block();
                     } else {
                         let new_template = self.held_template.as_ref().unwrap().clone();
-                        self.set_falling_block_with_template(new_template);
+                        self.spawn_falling_block_with_template(new_template);
                     }
                     self.held_template = Some(held_template);
                     self.can_hold_falling_block = false;
@@ -659,14 +702,16 @@ impl Playfield {
     }
 
     pub fn update(&mut self, renderer: &mut SoftwareRenderer, dt: f32, x: i32, y: i32) {
-        self.time_remain -= dt;
-        if self.time_remain < 0.0 {
-            self.move_falling_block(Movement::Down);
+        if !self.is_lost {
+            self.time_remain -= dt;
+            if self.time_remain < 0.0 {
+                self.move_falling_block(Movement::Down);
+            }
         }
 
         let block_size_in_pixels = 32i32;
         let width = self.block.width as i32 * block_size_in_pixels;
-        let height = (self.block.height - 2) as i32 * block_size_in_pixels;
+        let height = (self.block.height) as i32 * block_size_in_pixels;
 
         // Held template
         if let Some(ref mut held_template) = self.held_template {
@@ -707,7 +752,7 @@ impl Playfield {
             }
 
             // Simply clip the block
-            if self.falling_block.y + (row as i32) < self.block.height as i32 - 2 {
+            if self.falling_block.y + (row as i32) < self.block.height as i32 {
                 let x_offset = (self.falling_block.x + col as i32) * block_size_in_pixels;
                 let y_offset = (self.falling_block.y + row as i32) * block_size_in_pixels;
                 let x = x + x_offset;
@@ -742,7 +787,7 @@ impl Playfield {
 
         // Grids
 
-        for row in 1..self.block.height - 2 {
+        for row in 1..self.block.height {
             let y_offset = row as i32 * block_size_in_pixels;
             renderer.hline(y + y_offset, x, x + width, color);
         }
@@ -789,7 +834,7 @@ pub struct Retris {
 
 impl Retris {
     pub fn new() -> Retris {
-        Retris { playfield: Playfield::new(10, 22) }
+        Retris { playfield: Playfield::new(10, 20) }
     }
 
     pub fn update(&mut self, renderer: &mut SoftwareRenderer, dt: f32) {
@@ -816,7 +861,6 @@ fn main() {
     let mut event_pump = sdl2.event_pump().unwrap();
 
     let mut retris = Retris::new();
-    retris.playfield.set_falling_block();
 
     let mut frame_last = PreciseTime::now();
 
