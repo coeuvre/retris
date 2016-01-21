@@ -13,8 +13,10 @@ use renderer::*;
 
 mod renderer;
 
-// TODO(coeuvre): Placeholder type for Cell.
-pub type Cell = ();
+#[derive(Copy, Clone)]
+pub struct Cell {
+    color: RGBA,
+}
 
 macro_rules! block_iter {
     ($block:expr) => {
@@ -138,6 +140,28 @@ pub struct BlockTemplate {
 
 impl BlockTemplate {
     pub fn new() -> BlockTemplate {
+        let cyan = Cell {
+            color: RGBA {r: 0.0, g: 240.0 / 255.0, b: 241.0 / 255.0, a: 1.0}
+        };
+        let yellow = Cell {
+            color: RGBA {r: 240.0 / 255.0, g: 242.0 / 255.0, b: 0.0, a: 1.0}
+        };
+        let purple = Cell {
+            color: RGBA {r: 161.0 / 255.0, g: 0.0, b: 244.0 / 255.0, a: 1.0}
+        };
+        let green = Cell {
+            color: RGBA {r: 0.0, g: 242.0 / 255.0, b: 0.0, a: 1.0}
+        };
+        let red = Cell {
+            color: RGBA {r: 243.0 / 255.0, g: 0.0, b: 0.0, a: 1.0}
+        };
+        let blue = Cell {
+            color: RGBA {r: 0.0, g: 0.0, b: 244.0 / 255.0, a: 1.0}
+        };
+        let orange = Cell {
+            color: RGBA {r: 242.0 / 255.0, g: 161.0 / 255.0, b: 0.0, a: 1.0}
+        };
+
         // NOTE(coeuvre): Bitmap data for blocks. The origin is left-bottom corner.
         //
         //   x x x x
@@ -155,26 +179,26 @@ impl BlockTemplate {
                     Block::from_data(4, 4, vec![
                         None, None, None, None,
                         None, None, None, None,
-                        Some(()),  Some(()),  Some(()),  Some(()),
+                        Some(cyan),  Some(cyan),  Some(cyan),  Some(cyan),
                         None, None, None, None,
                     ]),
                     Block::from_data(4, 4, vec![
-                        None, None, Some(()), None,
-                        None, None, Some(()), None,
-                        None, None, Some(()), None,
-                        None, None, Some(()), None,
+                        None, None, Some(cyan), None,
+                        None, None, Some(cyan), None,
+                        None, None, Some(cyan), None,
+                        None, None, Some(cyan), None,
                     ]),
                     Block::from_data(4, 4, vec![
                         None, None, None, None,
-                        Some(()),  Some(()),  Some(()),  Some(()),
+                        Some(cyan),  Some(cyan),  Some(cyan),  Some(cyan),
                         None, None, None, None,
                         None, None, None, None,
                     ]),
                     Block::from_data(4, 4, vec![
-                        None, Some(()), None, None,
-                        None, Some(()), None, None,
-                        None, Some(()), None, None,
-                        None, Some(()), None, None,
+                        None, Some(cyan), None, None,
+                        None, Some(cyan), None, None,
+                        None, Some(cyan), None, None,
+                        None, Some(cyan), None, None,
                     ]),
                 ],
 
@@ -182,23 +206,23 @@ impl BlockTemplate {
                 [
                     Block::from_data(4, 3, vec![
                         None, None, None, None,
-                        None, Some(()), Some(()), None,
-                        None, Some(()), Some(()), None,
+                        None, Some(yellow), Some(yellow), None,
+                        None, Some(yellow), Some(yellow), None,
                     ]),
                     Block::from_data(4, 3, vec![
                         None, None, None, None,
-                        None, Some(()), Some(()), None,
-                        None, Some(()), Some(()), None,
+                        None, Some(yellow), Some(yellow), None,
+                        None, Some(yellow), Some(yellow), None,
                     ]),
                     Block::from_data(4, 3, vec![
                         None, None, None, None,
-                        None, Some(()), Some(()), None,
-                        None, Some(()), Some(()), None,
+                        None, Some(yellow), Some(yellow), None,
+                        None, Some(yellow), Some(yellow), None,
                     ]),
                     Block::from_data(4, 3, vec![
                         None, None, None, None,
-                        None, Some(()), Some(()), None,
-                        None, Some(()), Some(()), None,
+                        None, Some(yellow), Some(yellow), None,
+                        None, Some(yellow), Some(yellow), None,
                     ]),
                 ],
 
@@ -206,23 +230,23 @@ impl BlockTemplate {
                 [
                     Block::from_data(3, 3, vec![
                         None, None, None,
-                        Some(()), Some(()), Some(()),
-                        None, Some(()), None,
+                        Some(purple), Some(purple), Some(purple),
+                        None, Some(purple), None,
                     ]),
                     Block::from_data(3, 3, vec![
-                        None, Some(()), None,
-                        None, Some(()), Some(()),
-                        None, Some(()), None,
+                        None, Some(purple), None,
+                        None, Some(purple), Some(purple),
+                        None, Some(purple), None,
                     ]),
                     Block::from_data(3, 3, vec![
-                        None, Some(()), None,
-                        Some(()), Some(()), Some(()),
+                        None, Some(purple), None,
+                        Some(purple), Some(purple), Some(purple),
                         None, None, None,
                     ]),
                     Block::from_data(3, 3, vec![
-                        None, Some(()), None,
-                        Some(()), Some(()), None,
-                        None, Some(()), None,
+                        None, Some(purple), None,
+                        Some(purple), Some(purple), None,
+                        None, Some(purple), None,
                     ]),
                 ],
 
@@ -230,23 +254,23 @@ impl BlockTemplate {
                 [
                     Block::from_data(3, 3, vec![
                         None, None, None,
-                        Some(()), Some(()), None,
-                        None, Some(()), Some(()),
+                        Some(green), Some(green), None,
+                        None, Some(green), Some(green),
                     ]),
                     Block::from_data(3, 3, vec![
-                        None, None, Some(()),
-                        None, Some(()), Some(()),
-                        None, Some(()), None,
+                        None, None, Some(green),
+                        None, Some(green), Some(green),
+                        None, Some(green), None,
                     ]),
                     Block::from_data(3, 3, vec![
-                        Some(()), Some(()), None,
-                        None, Some(()), Some(()),
+                        Some(green), Some(green), None,
+                        None, Some(green), Some(green),
                         None, None, None,
                     ]),
                     Block::from_data(3, 3, vec![
-                        None, Some(()), None,
-                        Some(()), Some(()), None,
-                        Some(()), None, None,
+                        None, Some(green), None,
+                        Some(green), Some(green), None,
+                        Some(green), None, None,
                     ]),
                 ],
 
@@ -254,23 +278,23 @@ impl BlockTemplate {
                 [
                     Block::from_data(3, 3, vec![
                         None, None, None,
-                        None, Some(()), Some(()),
-                        Some(()), Some(()), None,
+                        None, Some(red), Some(red),
+                        Some(red), Some(red), None,
                     ]),
                     Block::from_data(3, 3, vec![
-                        None, Some(()), None,
-                        None, Some(()), Some(()),
-                        None, None, Some(()),
+                        None, Some(red), None,
+                        None, Some(red), Some(red),
+                        None, None, Some(red),
                     ]),
                     Block::from_data(3, 3, vec![
-                        None, Some(()), Some(()),
-                        Some(()), Some(()), None,
+                        None, Some(red), Some(red),
+                        Some(red), Some(red), None,
                         None, None, None,
                     ]),
                     Block::from_data(3, 3, vec![
-                        Some(()), None, None,
-                        Some(()), Some(()), None,
-                        None, Some(()), None,
+                        Some(red), None, None,
+                        Some(red), Some(red), None,
+                        None, Some(red), None,
                     ]),
                 ],
 
@@ -278,23 +302,23 @@ impl BlockTemplate {
                 [
                     Block::from_data(3, 3, vec![
                         None, None, None,
-                        Some(()), Some(()), Some(()),
-                        Some(()), None, None,
+                        Some(blue), Some(blue), Some(blue),
+                        Some(blue), None, None,
                     ]),
                     Block::from_data(3, 3, vec![
-                        None, Some(()), None,
-                        None, Some(()), None,
-                        None, Some(()), Some(()),
+                        None, Some(blue), None,
+                        None, Some(blue), None,
+                        None, Some(blue), Some(blue),
                     ]),
                     Block::from_data(3, 3, vec![
-                        None, None, Some(()),
-                        Some(()), Some(()), Some(()),
+                        None, None, Some(blue),
+                        Some(blue), Some(blue), Some(blue),
                         None, None, None,
                     ]),
                     Block::from_data(3, 3, vec![
-                        Some(()), Some(()), None,
-                        None, Some(()), None,
-                        None, Some(()), None,
+                        Some(blue), Some(blue), None,
+                        None, Some(blue), None,
+                        None, Some(blue), None,
                     ]),
                 ],
 
@@ -302,23 +326,23 @@ impl BlockTemplate {
                 [
                     Block::from_data(3, 3, vec![
                         None, None, None,
-                        Some(()), Some(()), Some(()),
-                        None, None, Some(()),
+                        Some(orange), Some(orange), Some(orange),
+                        None, None, Some(orange),
                     ]),
                     Block::from_data(3, 3, vec![
-                        None, Some(()), Some(()),
-                        None, Some(()), None,
-                        None, Some(()), None,
+                        None, Some(orange), Some(orange),
+                        None, Some(orange), None,
+                        None, Some(orange), None,
                     ]),
                     Block::from_data(3, 3, vec![
-                        Some(()), None, None,
-                        Some(()), Some(()), Some(()),
+                        Some(orange), None, None,
+                        Some(orange), Some(orange), Some(orange),
                         None, None, None,
                     ]),
                     Block::from_data(3, 3, vec![
-                        None, Some(()), None,
-                        None, Some(()), None,
-                        Some(()), Some(()), None,
+                        None, Some(orange), None,
+                        None, Some(orange), None,
+                        Some(orange), Some(orange), None,
                     ]),
                 ],
             ],
@@ -593,19 +617,12 @@ impl Playfield {
 
         let block_size_in_pixels = 32i32;
 
-        let color = RGBA {
-            r: 1.0,
-            g: 1.0,
-            b: 1.0,
-            a: 1.0,
-        };
-
         // Falling block
         if let Some(ref mut falling_block) = self.falling_block {
             let block = self.block_template.block(&falling_block.template);
             let (ghost_x, ghost_y) = self.block.get_ghost_block_pos(falling_block.x, falling_block.y, block);
 
-            for (col, row, _) in block_iter!(block) {
+            for (col, row, cell) in block_iter!(block) {
                 // Ghost
                 {
                     let x_offset = (ghost_x + col as i32) * block_size_in_pixels;
@@ -616,7 +633,7 @@ impl Playfield {
                                   y + 1,
                                   x + block_size_in_pixels - 1,
                                   y + block_size_in_pixels - 1,
-                                  color);
+                                  cell.color);
                 }
 
                 // Simply clip the block
@@ -629,13 +646,13 @@ impl Playfield {
                                        y + 1,
                                        x + block_size_in_pixels,
                                        y + block_size_in_pixels,
-                                       color);
+                                       cell.color);
                 }
             }
         }
 
         // Fixed cells
-        for (col, row, _) in block_iter!(self.block) {
+        for (col, row, cell) in block_iter!(self.block) {
             let x_offset = (col as i32) * block_size_in_pixels;
             let y_offset = (row as i32) * block_size_in_pixels;
             let x = x + x_offset;
@@ -644,7 +661,7 @@ impl Playfield {
                                y + 1,
                                x + block_size_in_pixels,
                                y + block_size_in_pixels,
-                               color);
+                               cell.color);
         }
 
         let color = RGBA {
