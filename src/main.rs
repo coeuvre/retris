@@ -120,6 +120,15 @@ impl Block {
             }
         }
     }
+
+    pub fn get_ghost_block_pos(&self, x: i32, mut y: i32, block: &Block) -> (i32, i32) {
+        loop {
+            if !self.is_valid_position(x, y, block) {
+                return (x, y + 1)
+            }
+            y -= 1;
+        }
+    }
 }
 
 pub struct BlockTemplate {
@@ -473,6 +482,7 @@ pub enum Movement {
     Down,
     RRotate,
     LRotate,
+    Drop,
 }
 
 pub struct Playfield {
@@ -512,7 +522,7 @@ impl Playfield {
         self.time_remain = self.interval;
     }
 
-    fn move_falling_block(&mut self, movement: Movement) {
+    pub fn move_falling_block(&mut self, movement: Movement) {
         let mut is_falling_block_locked = false;
         if let Some(ref mut falling_block) = self.falling_block {
             let x = falling_block.x;
@@ -539,6 +549,12 @@ impl Playfield {
                         self.block.lock_block(x, y, block);
                         is_falling_block_locked = true;
                     }
+                }
+                Movement::Drop => {
+                    let block = self.block_template.block(&falling_block.template);
+                    let (x, y) = self.block.get_ghost_block_pos(x, y, block);
+                    self.block.lock_block(x, y, block);
+                    is_falling_block_locked = true;
                 }
                 Movement::RRotate | Movement::LRotate => {
                     let mut new_template = falling_block.template.clone();
@@ -578,17 +594,31 @@ impl Playfield {
         let block_size_in_pixels = 32i32;
 
         let color = RGBA {
-            r: 0.6,
-            g: 0.6,
-            b: 0.6,
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
             a: 1.0,
         };
 
-        // Current block
+        // Falling block
         if let Some(ref mut falling_block) = self.falling_block {
             let block = self.block_template.block(&falling_block.template);
+            let (ghost_x, ghost_y) = self.block.get_ghost_block_pos(falling_block.x, falling_block.y, block);
 
             for (col, row, _) in block_iter!(block) {
+                // Ghost
+                {
+                    let x_offset = (ghost_x + col as i32) * block_size_in_pixels;
+                    let y_offset = (ghost_y + row as i32) * block_size_in_pixels;
+                    let x = x + x_offset;
+                    let y = y + y_offset;
+                    renderer.rect(x + 1,
+                                  y + 1,
+                                  x + block_size_in_pixels - 1,
+                                  y + block_size_in_pixels - 1,
+                                  color);
+                }
+
                 // Simply clip the block
                 if falling_block.y + (row as i32) < self.block.height as i32 - 2 {
                     let x_offset = (falling_block.x + col as i32) * block_size_in_pixels;
@@ -616,6 +646,13 @@ impl Playfield {
                                y + block_size_in_pixels,
                                color);
         }
+
+        let color = RGBA {
+            r: 0.6,
+            g: 0.6,
+            b: 0.6,
+            a: 1.0,
+        };
 
         // Grids
         let width = self.block.width as i32 * block_size_in_pixels;
@@ -677,6 +714,7 @@ fn main() {
     let mut event_pump = sdl2.event_pump().unwrap();
 
     let mut retris = Retris::new();
+    retris.playfield.set_falling_block();
 
     let mut frame_last = PreciseTime::now();
 
@@ -688,7 +726,7 @@ fn main() {
                 Event::Quit {..} |
                 Event::KeyDown {keycode: Some(Keycode::Escape), ..} => break 'running,
                 Event::KeyDown {keycode: Some(Keycode::Space), ..} => {
-                    retris.playfield.set_falling_block();
+                    retris.playfield.move_falling_block(Movement::Drop);
                 }
                 Event::KeyDown {keycode: Some(Keycode::Left), ..} => {
                     retris.playfield.move_falling_block(Movement::Left);
