@@ -73,10 +73,58 @@ impl Block {
             self.set_with_cell((x + col as i32) as usize, (y + row as i32) as usize, cell);
         }
     }
+
+    pub fn is_valid_position(&self, x: i32, y: i32, block: &Block) -> bool {
+        for (col, row, _) in block_iter!(block) {
+            let x = x + col as i32;
+            let y = y + row as i32;
+
+            if x < 0 || x >= self.width as i32 || y < 0 ||
+               self.get(x as usize, y as usize).is_some() {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    pub fn lock_block(&mut self, x: i32, y: i32, block: &Block) {
+        self.set_with_block(x, y, block);
+
+        let mut lines = vec![];
+        for row in 0..self.height {
+            let mut is_empty_line = true;
+            let mut is_need_break = true;
+
+            for col in 0..self.width {
+                is_empty_line = false;
+                let block = self.get(col, row);
+                if block.is_none() {
+                    is_need_break = false;
+                    break;
+                }
+            }
+
+            if !is_empty_line && is_need_break {
+                lines.push(row);
+            }
+        }
+
+        lines.reverse();
+        for row in lines {
+            for row in row + 1..self.height {
+                for col in 0..self.width {
+                    let cell = self.get(col, row).map(|b| b.clone());
+                    self.set(col, row - 1, cell);
+                }
+            }
+        }
+    }
 }
 
 pub struct BlockTemplate {
-    templates: Vec<Vec<Block>>,
+    templates: [[Block; 4]; 7],
+    wall_kick_table: [[[(i32, i32); 5]; 8]; 2],
 }
 
 impl BlockTemplate {
@@ -88,13 +136,13 @@ impl BlockTemplate {
         //   x x x x
         //   o x x x
         //
-        //   Using SRS described at http://tetris.wikia.com/wiki/SRS.
+        //   Using SRS described at https://tetris.wiki/SRS.
         //
         #[rustfmt_skip]
         BlockTemplate {
-            templates: vec![
+            templates: [
                 // Cyan I
-                vec![
+                [
                     Block::from_data(4, 4, vec![
                         None, None, None, None,
                         None, None, None, None,
@@ -122,7 +170,22 @@ impl BlockTemplate {
                 ],
 
                 // Yellow O
-                vec![
+                [
+                    Block::from_data(4, 3, vec![
+                        None, None, None, None,
+                        None, Some(()), Some(()), None,
+                        None, Some(()), Some(()), None,
+                    ]),
+                    Block::from_data(4, 3, vec![
+                        None, None, None, None,
+                        None, Some(()), Some(()), None,
+                        None, Some(()), Some(()), None,
+                    ]),
+                    Block::from_data(4, 3, vec![
+                        None, None, None, None,
+                        None, Some(()), Some(()), None,
+                        None, Some(()), Some(()), None,
+                    ]),
                     Block::from_data(4, 3, vec![
                         None, None, None, None,
                         None, Some(()), Some(()), None,
@@ -131,7 +194,7 @@ impl BlockTemplate {
                 ],
 
                 // Purple T
-                vec![
+                [
                     Block::from_data(3, 3, vec![
                         None, None, None,
                         Some(()), Some(()), Some(()),
@@ -155,7 +218,7 @@ impl BlockTemplate {
                 ],
 
                 // Green S
-                vec![
+                [
                     Block::from_data(3, 3, vec![
                         None, None, None,
                         Some(()), Some(()), None,
@@ -179,7 +242,7 @@ impl BlockTemplate {
                 ],
 
                 // Red Z
-                vec![
+                [
                     Block::from_data(3, 3, vec![
                         None, None, None,
                         None, Some(()), Some(()),
@@ -203,7 +266,7 @@ impl BlockTemplate {
                 ],
 
                 // Blue J
-                vec![
+                [
                     Block::from_data(3, 3, vec![
                         None, None, None,
                         Some(()), Some(()), Some(()),
@@ -227,7 +290,7 @@ impl BlockTemplate {
                 ],
 
                 // Orange L
-                vec![
+                [
                     Block::from_data(3, 3, vec![
                         None, None, None,
                         Some(()), Some(()), Some(()),
@@ -250,6 +313,48 @@ impl BlockTemplate {
                     ]),
                 ],
             ],
+
+            wall_kick_table: [
+                // J, L, S, T, Z wall kick data
+                [
+                    // 0 -> 1
+                    [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],
+                    // 1 -> 0
+                    [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],
+                    // 1 -> 2
+                    [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],
+                    // 2 -> 1
+                    [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],
+                    // 2 -> 3
+                    [(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],
+                    // 3 -> 2
+                    [(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],
+                    // 3 -> 0
+                    [(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],
+                    // 0 -> 3
+                    [(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],
+                ],
+
+                // I wall kick data
+                [
+                    // 0 -> 1
+                    [(0, 0), (-2, 0), (1, 0), (-2, -1), (1, 2)],
+                    // 1 -> 0
+                    [(0, 0), (2, 0), (-1, 0), (2, 1), (-1, -2)],
+                    // 1 -> 2
+                    [(0, 0), (-1, 0), (2, 0), (-1, 2), (2, -1)],
+                    // 2 -> 1
+                    [(0, 0), (1, 0), (-2, 0), (1, -2), (-2, 1)],
+                    // 2 -> 3
+                    [(0, 0), (2, 0), (-1, 0), (2, 1), (-1, -2)],
+                    // 3 -> 2
+                    [(0, 0), (-2, 0), (1, 0), (-2, -1), (1, 2)],
+                    // 3 -> 0
+                    [(0, 0), (1, 0), (-2, 0), (1, -2), (-2, 1)],
+                    // 0 -> 3
+                    [(0, 0), (-1, 0), (2, 0), (-1, 2), (2, -1)],
+                ],
+            ],
         }
     }
 
@@ -265,26 +370,75 @@ impl BlockTemplate {
         }
     }
 
-    pub fn block(&self, r: &BlockTemplateRef) -> &Block {
-        &self.templates[r.shape][r.order]
+    pub fn block(&self, template: &BlockTemplateRef) -> &Block {
+        &self.templates[template.shape][template.order]
+    }
+
+    pub fn wall_kick_table(&self, template: &BlockTemplateRef, new_template: &BlockTemplateRef) -> &[(i32, i32); 5] {
+        assert!(template.order != new_template.order);
+
+        let index = match template.order {
+            0 => match new_template.order {
+                1 => 0,
+                3 => 7,
+                _ => unreachable!(),
+            },
+            1 => match new_template.order {
+                2 => 2,
+                0 => 1,
+                _ => unreachable!(),
+            },
+            2 => match new_template.order {
+                3 => 4,
+                1 => 3,
+                _ => unreachable!(),
+            },
+            3 => match new_template.order {
+                0 => 6,
+                2 => 5,
+                _ => unreachable!(),
+            },
+            _ => unreachable!(),
+        };
+
+        if template.shape == 0 {
+            &self.wall_kick_table[1][index]
+        } else {
+            &self.wall_kick_table[0][index]
+        }
     }
 }
 
+#[derive(Clone)]
 pub struct BlockTemplateRef {
     shape: usize,
     order: usize,
     order_max: usize,
 }
 
-pub struct ActiveBlock {
+impl BlockTemplateRef {
+    pub fn rrotate(&mut self) {
+        self.order = (self.order + 1) % self.order_max;
+    }
+
+    pub fn lrotate(&mut self) {
+        if self.order == 0 {
+            self.order = self.order_max - 1;
+        } else {
+            self.order -= 1;
+        }
+    }
+}
+
+pub struct FallingBlock {
     template: BlockTemplateRef,
     x: i32,
     y: i32,
 }
 
-impl ActiveBlock {
-    pub fn new(template: BlockTemplateRef) -> ActiveBlock {
-        ActiveBlock {
+impl FallingBlock {
+    pub fn new(template: BlockTemplateRef) -> FallingBlock {
+        FallingBlock {
             template: template,
             x: 0,
             y: 0,
@@ -311,10 +465,14 @@ impl ActiveBlock {
     pub fn right(&mut self) {
         self.x += 1;
     }
+}
 
-    pub fn rotate(&mut self) {
-        self.template.order = (self.template.order + 1) % self.template.order_max;
-    }
+pub enum Movement {
+    Left,
+    Right,
+    Down,
+    RRotate,
+    LRotate,
 }
 
 pub struct Playfield {
@@ -322,7 +480,7 @@ pub struct Playfield {
 
     block_template: BlockTemplate,
 
-    active_block: Option<ActiveBlock>,
+    falling_block: Option<FallingBlock>,
 
     interval: f32,
     time_remain: f32,
@@ -334,152 +492,87 @@ impl Playfield {
             block: Block::new(width, height),
 
             block_template: BlockTemplate::new(),
-            active_block: None,
+
+            falling_block: None,
 
             interval: 1.0,
             time_remain: 0.0,
         }
     }
 
-    pub fn set_active_block(&mut self) {
-        if self.active_block.is_some() {
+    pub fn set_falling_block(&mut self) {
+        if self.falling_block.is_some() {
             return;
         }
 
         let r = self.block_template.generate();
-        let mut active_block = ActiveBlock::new(r);
-        active_block.move_to(3, 19);
-        self.active_block = Some(active_block);
+        let mut falling_block = FallingBlock::new(r);
+        falling_block.move_to(3, 19);
+        self.falling_block = Some(falling_block);
         self.time_remain = self.interval;
     }
 
-    pub fn move_active_block_left(&mut self) {
-        if let Some(ref mut active_block) = self.active_block {
-            active_block.left();
-
-            let block = self.block_template.block(&active_block.template);
-            let mut is_collide = false;
-            let mut min_x = self.block.width as i32;
-            for (col, row, _) in block_iter!(block) {
-                let x = active_block.x + col as i32;
-                let y = active_block.y + row as i32;
-
-                min_x = std::cmp::min(x, min_x);
-
-                if self.block.get(x as usize, y as usize).is_some() {
-                    is_collide = true;
-                    break;
+    fn move_falling_block(&mut self, movement: Movement) {
+        let mut is_falling_block_locked = false;
+        if let Some(ref mut falling_block) = self.falling_block {
+            let x = falling_block.x;
+            let y = falling_block.y;
+            match movement {
+                Movement::Left => {
+                    let block = self.block_template.block(&falling_block.template);
+                    if self.block.is_valid_position(x - 1, y, block) {
+                        falling_block.left();
+                    }
                 }
-            }
-
-            if min_x < 0 || is_collide {
-                active_block.right();
-            }
-        }
-    }
-
-    pub fn move_active_block_right(&mut self) {
-        if let Some(ref mut active_block) = self.active_block {
-            active_block.right();
-
-            let block = self.block_template.block(&active_block.template);
-            let mut is_collide = false;
-            let mut max_x = -1;
-            for (col, row, _) in block_iter!(block) {
-                let x = active_block.x + col as i32;
-                let y = active_block.y + row as i32;
-
-                max_x = std::cmp::max(x, max_x);
-
-                if self.block.get(x as usize, y as usize).is_some() {
-                    is_collide = true;
-                    break;
+                Movement::Right => {
+                    let block = self.block_template.block(&falling_block.template);
+                    if self.block.is_valid_position(x + 1, y, block) {
+                        falling_block.right();
+                    }
                 }
-            }
-
-            if max_x >= self.block.width as i32 || is_collide {
-                active_block.left();
-            }
-        }
-    }
-
-    fn put_active_block(&mut self) {
-        if let Some(ref mut active_block) = self.active_block {
-            let block = self.block_template.block(&active_block.template);
-            self.block.set_with_block(active_block.x, active_block.y, block);
-        }
-
-        self.active_block = None;
-
-        let mut rows_need_remove = vec![];
-        for row in 0..self.block.height {
-            let mut row_is_empty = true;
-            let mut row_need_remove = true;
-
-            for col in 0..self.block.width {
-                row_is_empty = false;
-                let block = self.block.get(col, row);
-                if block.is_none() {
-                    row_need_remove = false;
-                    break;
+                Movement::Down => {
+                    self.time_remain = self.interval;
+                    let block = self.block_template.block(&falling_block.template);
+                    if self.block.is_valid_position(x, y - 1, block) {
+                        falling_block.down();
+                    } else {
+                        self.block.lock_block(x, y, block);
+                        is_falling_block_locked = true;
+                    }
                 }
-            }
-
-            if !row_is_empty && row_need_remove {
-                rows_need_remove.push(row);
-            }
-        }
-
-        rows_need_remove.reverse();
-        for row in rows_need_remove {
-            for row in row + 1..self.block.height {
-                for col in 0..self.block.width {
-                    let block = self.block.get(col, row).map(|b| b.clone());
-                    self.block.set(col, row - 1, block);
+                Movement::RRotate | Movement::LRotate => {
+                    let mut new_template = falling_block.template.clone();
+                    match movement {
+                        Movement::RRotate => new_template.rrotate(),
+                        Movement::LRotate => new_template.lrotate(),
+                        _ => unreachable!(),
+                    };
+                    let block = self.block_template.block(&new_template);
+                    let table = self.block_template.wall_kick_table(&falling_block.template, &new_template);
+                    for &(dx, dy) in table {
+                        let x = x + dx;
+                        let y = y + dy;
+                        if self.block.is_valid_position(x, y, block) {
+                            falling_block.x = x;
+                            falling_block.y = y;
+                            falling_block.template = new_template;
+                            break;
+                        }
+                    }
                 }
             }
         }
-    }
 
-    pub fn move_active_block_down(&mut self) {
-        self.time_remain = self.interval;
-
-        let mut is_collide = false;
-
-        if let Some(ref mut active_block) = self.active_block {
-            active_block.down();
-
-            let block = self.block_template.block(&active_block.template);
-            for (col, row, _) in block_iter!(block) {
-                let x = active_block.x + col as i32;
-                let y = active_block.y + row as i32;
-                if y == -1 || self.block.get(x as usize, y as usize).is_some() {
-                    is_collide = true;
-                    break;
-                }
-            }
-
-            if is_collide {
-                active_block.up();
-            }
-        }
-
-        if is_collide {
-            self.put_active_block();
-            self.set_active_block();
-        }
-    }
-
-    pub fn rotate_active_block(&mut self) {
-        if let Some(ref mut active_block) = self.active_block {
-            active_block.rotate();
+        if is_falling_block_locked {
+            self.falling_block = None;
+            self.set_falling_block();
         }
     }
 
     pub fn update(&mut self, renderer: &mut SoftwareRenderer, dt: f32, x: i32, y: i32) {
         self.time_remain -= dt;
         if self.time_remain < 0.0 {
-            self.move_active_block_down();
+            self.move_falling_block(Movement::Down);
         }
 
         let block_size_in_pixels = 32i32;
@@ -492,14 +585,14 @@ impl Playfield {
         };
 
         // Current block
-        if let Some(ref mut active_block) = self.active_block {
-            let block = self.block_template.block(&active_block.template);
+        if let Some(ref mut falling_block) = self.falling_block {
+            let block = self.block_template.block(&falling_block.template);
 
             for (col, row, _) in block_iter!(block) {
                 // Simply clip the block
-                if active_block.y + (row as i32) < self.block.height as i32 - 2 {
-                    let x_offset = (active_block.x + col as i32) * block_size_in_pixels;
-                    let y_offset = (active_block.y + row as i32) * block_size_in_pixels;
+                if falling_block.y + (row as i32) < self.block.height as i32 - 2 {
+                    let x_offset = (falling_block.x + col as i32) * block_size_in_pixels;
+                    let y_offset = (falling_block.y + row as i32) * block_size_in_pixels;
                     let x = x + x_offset;
                     let y = y + y_offset;
                     renderer.fill_rect(x + 1,
@@ -595,19 +688,19 @@ fn main() {
                 Event::Quit {..} |
                 Event::KeyDown {keycode: Some(Keycode::Escape), ..} => break 'running,
                 Event::KeyDown {keycode: Some(Keycode::Space), ..} => {
-                    retris.playfield.set_active_block();
+                    retris.playfield.set_falling_block();
                 }
                 Event::KeyDown {keycode: Some(Keycode::Left), ..} => {
-                    retris.playfield.move_active_block_left();
+                    retris.playfield.move_falling_block(Movement::Left);
                 }
                 Event::KeyDown {keycode: Some(Keycode::Right), ..} => {
-                    retris.playfield.move_active_block_right();
+                    retris.playfield.move_falling_block(Movement::Right);
                 }
                 Event::KeyDown {keycode: Some(Keycode::Up), ..} => {
-                    retris.playfield.rotate_active_block();
+                    retris.playfield.move_falling_block(Movement::RRotate);
                 }
                 Event::KeyDown {keycode: Some(Keycode::Down), ..} => {
-                    retris.playfield.move_active_block_down();
+                    retris.playfield.move_falling_block(Movement::Down);
                 }
                 _ => {}
             }
