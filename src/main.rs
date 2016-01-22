@@ -535,7 +535,58 @@ pub enum Movement {
     Hold,
 }
 
+pub enum PlayfieldState {
+    Prepare,
+    Spwaning,
+    Falling,
+    Locking,
+    Breaking,
+    Paused,
+    Lost,
+}
+
+pub struct Timer {
+    interval: f32,
+    elapsed: f32,
+}
+
+impl Timer {
+    pub fn new(interval: f32) -> Timer {
+        Timer {
+            interval: interval,
+            elapsed: 0.0,
+        }
+    }
+
+    pub fn tick(&mut self, dt: f32) {
+        self.elapsed += dt;
+    }
+
+    pub fn is_expired(&self) -> bool {
+        self.elapsed >= self.interval
+    }
+
+    pub fn reset(&mut self) {
+        self.elapsed = 0.0;
+    }
+}
+
+fn frames_to_seconds(frames: f32) -> f32 {
+    // NOTE(coeuvre): Assuming the game run under 60 FPS.
+    let fps = 60.0;
+    frames / fps
+}
+
+fn gravity_to_delay(gravity: f32) -> f32 {
+    // NOTE(coeuvre): gravity is how many cells per frame, so the inverse
+    // is how many frames per cell.
+    frames_to_seconds(1.0 / gravity)
+}
+
+
 pub struct Playfield {
+    state: PlayfieldState,
+
     block: Block,
 
     block_template: BlockTemplate,
@@ -546,10 +597,9 @@ pub struct Playfield {
     held_template: Option<BlockTemplateRef>,
     can_hold_falling_block: bool,
 
-    interval: f32,
-    time_remain: f32,
-
-    is_lost: bool,
+    gravity_delay: Timer,
+    lock_delay: Timer,
+    max_lock_delay: Timer,
 }
 
 impl Playfield {
@@ -563,6 +613,8 @@ impl Playfield {
         ];
 
         Playfield {
+            state: PlayfieldState::Falling,
+
             block: Block::new(width, height),
 
             block_template: block_template,
@@ -573,10 +625,9 @@ impl Playfield {
             held_template: None,
             can_hold_falling_block: true,
 
-            interval: 1.0,
-            time_remain: 1.0,
-
-            is_lost: false,
+            gravity_delay: Timer::new(gravity_to_delay(0.015625)),
+            lock_delay: Timer::new(frames_to_seconds(30.0)),
+            max_lock_delay: Timer::new(frames_to_seconds(60.0)),
         }
     }
 
@@ -588,12 +639,12 @@ impl Playfield {
 
     fn spawn_falling_block_with_template(&mut self, template: BlockTemplateRef) {
         self.falling_block = Playfield::generate_falling_block_with_template(&self.block_template, template);
-        self.time_remain = self.interval;
+        self.gravity_delay.reset();
         // Block out
         if !self.block.is_valid_position(self.falling_block.x,
                                          self.falling_block.y,
                                          self.block_template.block(&self.falling_block.template)) {
-            self.is_lost = true;
+            self.state = PlayfieldState::Lost;
         }
     }
 
@@ -621,92 +672,129 @@ impl Playfield {
             let block = self.block_template.block(&self.falling_block.template);
             // Partial lock out
             if self.block.is_out_of_bounds(x, y, block) {
-                self.is_lost = true;
+                self.state = PlayfieldState::Lost;
                 return;
             }
             self.block.lock_block(x, y, block);
         }
         self.can_hold_falling_block = true;
         self.spawn_falling_block();
+        // TODO(coeuvre): Should set state to Spawning
+        self.lock_delay.reset();
+        self.max_lock_delay.reset();
+        self.state = PlayfieldState::Falling;
     }
 
     pub fn move_falling_block(&mut self, movement: Movement) {
-        if self.is_lost {
-            return;
-        }
+        match self.state {
+            PlayfieldState::Falling | PlayfieldState::Locking => {
+                let x = self.falling_block.x;
+                let y = self.falling_block.y;
+                let template = self.falling_block.template;
 
-        let x = self.falling_block.x;
-        let y = self.falling_block.y;
-        let template = self.falling_block.template;
-
-        match movement {
-            Movement::Left => {
-                let block = self.block_template.block(&template);
-                if self.block.is_valid_position(x - 1, y, block) {
-                    self.falling_block.left();
-                }
-            }
-            Movement::Right => {
-                let block = self.block_template.block(&template);
-                if self.block.is_valid_position(x + 1, y, block) {
-                    self.falling_block.right();
-                }
-            }
-            Movement::Down => {
-                self.time_remain = self.interval;
-                if self.block.is_valid_position(x, y - 1, self.block_template.block(&template)) {
-                    self.falling_block.down();
-                } else {
-                    self.lock_falling_block();
-                }
-            }
-            Movement::Drop => {
-                let (x, y) = self.block.get_ghost_block_pos(x, y, self.block_template.block(&template));
-                self.lock_falling_block_at(x, y);
-            }
-            Movement::RRotate | Movement::LRotate => {
-                let mut new_template = template;
                 match movement {
-                    Movement::RRotate => new_template.rrotate(),
-                    Movement::LRotate => new_template.lrotate(),
-                    _ => unreachable!(),
-                };
-                let block = self.block_template.block(&new_template);
-                let table = self.block_template.wall_kick_table(&template, &new_template);
-                for &(dx, dy) in table {
-                    let x = x + dx;
-                    let y = y + dy;
-                    if self.block.is_valid_position(x, y, block) {
-                        self.falling_block.x = x;
-                        self.falling_block.y = y;
-                        self.falling_block.template = new_template;
-                        break;
+                    Movement::Left => {
+                        let block = self.block_template.block(&template);
+                        if self.block.is_valid_position(x - 1, y, block) {
+                            self.falling_block.left();
+                            self.lock_delay.reset();
+                        }
+                    }
+                    Movement::Right => {
+                        let block = self.block_template.block(&template);
+                        if self.block.is_valid_position(x + 1, y, block) {
+                            self.falling_block.right();
+                            self.lock_delay.reset();
+                        }
+                    }
+                    Movement::Down => {
+                        if let PlayfieldState::Falling = self.state {
+                            if self.block.is_valid_position(x, y - 1, self.block_template.block(&template)) {
+                                self.falling_block.down();
+                                self.gravity_delay.reset();
+                                self.lock_delay.reset();
+                            } else {
+                                self.state = PlayfieldState::Falling;
+                            }
+                        }
+                    }
+                    Movement::Drop => {
+                        if let PlayfieldState::Falling = self.state {
+                            let (x, y) = self.block.get_ghost_block_pos(x, y, self.block_template.block(&template));
+                            self.falling_block.x = x;
+                            self.falling_block.y = y;
+                            self.gravity_delay.reset();
+                            self.lock_delay.reset();
+                            self.state = PlayfieldState::Falling;
+                        }
+                    }
+                    Movement::RRotate | Movement::LRotate => {
+                        let mut new_template = template;
+                        match movement {
+                            Movement::RRotate => new_template.rrotate(),
+                            Movement::LRotate => new_template.lrotate(),
+                            _ => unreachable!(),
+                        };
+                        let block = self.block_template.block(&new_template);
+                        let table = self.block_template.wall_kick_table(&template, &new_template);
+                        for &(dx, dy) in table {
+                            let x = x + dx;
+                            let y = y + dy;
+                            if self.block.is_valid_position(x, y, block) {
+                                self.falling_block.x = x;
+                                self.falling_block.y = y;
+                                self.falling_block.template = new_template;
+                                self.lock_delay.reset();
+                                if self.block.is_valid_position(x, y - 1, block) {
+                                    self.state = PlayfieldState::Falling;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    Movement::Hold => {
+                        if self.can_hold_falling_block {
+                            let mut held_template = template;
+                            held_template.order = 0;
+                            if self.held_template.is_none() {
+                                self.spawn_falling_block();
+                            } else {
+                                let new_template = self.held_template.as_ref().unwrap().clone();
+                                self.spawn_falling_block_with_template(new_template);
+                            }
+                            self.held_template = Some(held_template);
+                            self.can_hold_falling_block = false;
+                        }
                     }
                 }
             }
-            Movement::Hold => {
-                if self.can_hold_falling_block {
-                    let mut held_template = template;
-                    held_template.order = 0;
-                    if self.held_template.is_none() {
-                        self.spawn_falling_block();
-                    } else {
-                        let new_template = self.held_template.as_ref().unwrap().clone();
-                        self.spawn_falling_block_with_template(new_template);
-                    }
-                    self.held_template = Some(held_template);
-                    self.can_hold_falling_block = false;
-                }
-            }
+            _ => {}
         }
+
     }
 
     pub fn update(&mut self, renderer: &mut SoftwareRenderer, dt: f32, x: i32, y: i32) {
-        if !self.is_lost {
-            self.time_remain -= dt;
-            if self.time_remain < 0.0 {
-                self.move_falling_block(Movement::Down);
+        match self.state {
+            PlayfieldState::Falling => {
+                if self.block.is_valid_position(self.falling_block.x,
+                                                self.falling_block.y - 1,
+                                                &self.block_template.block(&self.falling_block.template)) {
+                    self.gravity_delay.tick(dt);
+                    if self.gravity_delay.is_expired() {
+                        self.move_falling_block(Movement::Down);
+                    }
+                } else {
+                    self.state = PlayfieldState::Locking;
+                }
             }
+            PlayfieldState::Locking => {
+                self.lock_delay.tick(dt);
+                self.max_lock_delay.tick(dt);
+                if self.lock_delay.is_expired() || self.max_lock_delay.is_expired() {
+                    self.lock_falling_block();
+                }
+            }
+            _ => {}
         }
 
         let block_size_in_pixels = 32i32;
