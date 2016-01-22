@@ -535,6 +535,38 @@ pub enum Movement {
     Hold,
 }
 
+pub struct State<T> {
+    stack: Vec<T>,
+}
+
+impl<T> State<T> {
+    pub fn new(init: T) -> State<T> {
+        State {
+            stack: vec![init],
+        }
+    }
+
+    pub fn push(&mut self, state: T) {
+        self.stack.push(state);
+    }
+
+    pub fn pop(&mut self) {
+        assert!(self.stack.len() > 1);
+
+        if self.stack.len() > 1 {
+            self.stack.pop();
+        }
+    }
+
+    pub fn top(&self) -> &T {
+        self.stack.last().unwrap()
+    }
+
+    pub fn set(&mut self, state: T) {
+        *self.stack.last_mut().unwrap() = state;
+    }
+}
+
 pub enum PlayfieldState {
     Prepare,
     Spwaning,
@@ -585,7 +617,7 @@ fn gravity_to_delay(gravity: f32) -> f32 {
 
 
 pub struct Playfield {
-    state: PlayfieldState,
+    state: State<PlayfieldState>,
 
     block: Block,
 
@@ -613,7 +645,7 @@ impl Playfield {
         ];
 
         Playfield {
-            state: PlayfieldState::Falling,
+            state: State::new(PlayfieldState::Falling),
 
             block: Block::new(width, height),
 
@@ -646,7 +678,7 @@ impl Playfield {
         if !self.block.is_valid_position(self.falling_block.x,
                                          self.falling_block.y,
                                          self.block_template.block(&self.falling_block.template)) {
-            self.state = PlayfieldState::Lost;
+            self.state.set(PlayfieldState::Lost);
         }
     }
 
@@ -674,7 +706,7 @@ impl Playfield {
             let block = self.block_template.block(&self.falling_block.template);
             // Partial lock out
             if self.block.is_out_of_bounds(x, y, block) {
-                self.state = PlayfieldState::Lost;
+                self.state.set(PlayfieldState::Lost);
                 return;
             }
             self.block.lock_block(x, y, block);
@@ -682,12 +714,12 @@ impl Playfield {
         self.can_hold_falling_block = true;
         self.spawn_falling_block();
         // TODO(coeuvre): Should set state to Spawning
-        self.state = PlayfieldState::Falling;
+        self.state.set(PlayfieldState::Falling);
     }
 
     pub fn move_falling_block(&mut self, movement: Movement) {
-        match self.state {
-            PlayfieldState::Falling | PlayfieldState::Locking => {
+        match self.state.top() {
+            &PlayfieldState::Falling | &PlayfieldState::Locking => {
                 let x = self.falling_block.x;
                 let y = self.falling_block.y;
                 let template = self.falling_block.template;
@@ -698,6 +730,9 @@ impl Playfield {
                         if self.block.is_valid_position(x - 1, y, block) {
                             self.falling_block.left();
                             self.lock_delay.reset();
+                            if self.block.is_valid_position(x, y - 1, block) {
+                                self.state.set(PlayfieldState::Falling);
+                            }
                         }
                     }
                     Movement::Right => {
@@ -705,21 +740,24 @@ impl Playfield {
                         if self.block.is_valid_position(x + 1, y, block) {
                             self.falling_block.right();
                             self.lock_delay.reset();
+                            if self.block.is_valid_position(x, y - 1, block) {
+                                self.state.set(PlayfieldState::Falling);
+                            }
                         }
                     }
                     Movement::Down => {
-                        if let PlayfieldState::Falling = self.state {
+                        if let &PlayfieldState::Falling = self.state.top() {
                             if self.block.is_valid_position(x, y - 1, self.block_template.block(&template)) {
                                 self.falling_block.down();
                                 self.gravity_delay.reset();
                                 self.lock_delay.reset();
                             } else {
-                                self.state = PlayfieldState::Falling;
+                                self.state.set(PlayfieldState::Locking);
                             }
                         }
                     }
                     Movement::Drop => {
-                        if let PlayfieldState::Falling = self.state {
+                        if let &PlayfieldState::Falling = self.state.top() {
                             let (x, y) = self.block.get_ghost_block_pos(x, y, self.block_template.block(&template));
                             self.lock_falling_block_at(x, y);
                         }
@@ -742,7 +780,7 @@ impl Playfield {
                                 self.falling_block.template = new_template;
                                 self.lock_delay.reset();
                                 if self.block.is_valid_position(x, y - 1, block) {
-                                    self.state = PlayfieldState::Falling;
+                                    self.state.set(PlayfieldState::Falling);
                                 }
                                 break;
                             }
@@ -769,9 +807,27 @@ impl Playfield {
 
     }
 
+    pub fn pause(&mut self) {
+        match self.state.top() {
+            &PlayfieldState::Paused => {}
+            _ => {
+                self.state.push(PlayfieldState::Paused);
+            }
+        }
+    }
+
+    pub fn resume(&mut self) {
+        match self.state.top() {
+            &PlayfieldState::Paused => {
+                self.state.pop();
+            }
+            _ => {}
+        }
+    }
+
     pub fn update(&mut self, renderer: &mut SoftwareRenderer, dt: f32, x: i32, y: i32) {
-        match self.state {
-            PlayfieldState::Falling => {
+        match self.state.top() {
+            &PlayfieldState::Falling => {
                 if self.block.is_valid_position(self.falling_block.x,
                                                 self.falling_block.y - 1,
                                                 &self.block_template.block(&self.falling_block.template)) {
@@ -780,10 +836,10 @@ impl Playfield {
                         self.move_falling_block(Movement::Down);
                     }
                 } else {
-                    self.state = PlayfieldState::Locking;
+                    self.state.set(PlayfieldState::Locking);
                 }
             }
-            PlayfieldState::Locking => {
+            &PlayfieldState::Locking => {
                 self.lock_delay.tick(dt);
                 self.max_lock_delay.tick(dt);
                 if self.lock_delay.is_expired() || self.max_lock_delay.is_expired() {
@@ -955,6 +1011,12 @@ fn main() {
             match event {
                 Event::Quit {..} |
                 Event::KeyDown {keycode: Some(Keycode::Escape), ..} => break 'running,
+                Event::KeyDown {keycode: Some(Keycode::P), ..} => {
+                    match retris.playfield.state.top() {
+                        &PlayfieldState::Paused => retris.playfield.resume(),
+                        _ => retris.playfield.pause(),
+                    }
+                }
                 Event::KeyDown {keycode: Some(Keycode::Z), ..} => {
                     retris.playfield.move_falling_block(Movement::LRotate);
                 }
