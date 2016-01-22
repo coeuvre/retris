@@ -640,6 +640,8 @@ impl Playfield {
     fn spawn_falling_block_with_template(&mut self, template: BlockTemplateRef) {
         self.falling_block = Playfield::generate_falling_block_with_template(&self.block_template, template);
         self.gravity_delay.reset();
+        self.lock_delay.reset();
+        self.max_lock_delay.reset();
         // Block out
         if !self.block.is_valid_position(self.falling_block.x,
                                          self.falling_block.y,
@@ -680,8 +682,6 @@ impl Playfield {
         self.can_hold_falling_block = true;
         self.spawn_falling_block();
         // TODO(coeuvre): Should set state to Spawning
-        self.lock_delay.reset();
-        self.max_lock_delay.reset();
         self.state = PlayfieldState::Falling;
     }
 
@@ -721,11 +721,7 @@ impl Playfield {
                     Movement::Drop => {
                         if let PlayfieldState::Falling = self.state {
                             let (x, y) = self.block.get_ghost_block_pos(x, y, self.block_template.block(&template));
-                            self.falling_block.x = x;
-                            self.falling_block.y = y;
-                            self.gravity_delay.reset();
-                            self.lock_delay.reset();
-                            self.state = PlayfieldState::Falling;
+                            self.lock_falling_block_at(x, y);
                         }
                     }
                     Movement::RRotate | Movement::LRotate => {
