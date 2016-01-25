@@ -10,11 +10,22 @@ use sdl2::keyboard::Keycode;
 use time::PreciseTime;
 
 use renderer::*;
+use bitmap::*;
 
-mod renderer;
+pub mod renderer;
+pub mod bitmap;
+
+const CYAN: i32 = 6;
+const YELLOW: i32 = 0;
+const PURPLE: i32 = 3;
+const GREEN: i32 = 4;
+const RED: i32 = 2;
+const BLUE: i32 = 5;
+const ORANGE: i32 = 1;
 
 #[derive(Copy, Clone)]
 pub struct Cell {
+    index: i32,
     color: RGBA,
 }
 
@@ -164,27 +175,34 @@ pub struct BlockTemplate {
 
 impl BlockTemplate {
     pub fn new() -> BlockTemplate {
-        let cyan = Cell {
-            color: RGBA {r: 0.0, g: 240.0 / 255.0, b: 241.0 / 255.0, a: 1.0}
-        };
-        let yellow = Cell {
-            color: RGBA {r: 240.0 / 255.0, g: 242.0 / 255.0, b: 0.0, a: 1.0}
-        };
-        let purple = Cell {
-            color: RGBA {r: 161.0 / 255.0, g: 0.0, b: 244.0 / 255.0, a: 1.0}
-        };
-        let green = Cell {
-            color: RGBA {r: 0.0, g: 242.0 / 255.0, b: 0.0, a: 1.0}
-        };
-        let red = Cell {
-            color: RGBA {r: 243.0 / 255.0, g: 0.0, b: 0.0, a: 1.0}
-        };
-        let blue = Cell {
-            color: RGBA {r: 0.0, g: 0.0, b: 244.0 / 255.0, a: 1.0}
-        };
-        let orange = Cell {
-            color: RGBA {r: 242.0 / 255.0, g: 161.0 / 255.0, b: 0.0, a: 1.0}
-        };
+         let cyan = Cell {
+             color: RGBA {r: 0.0, g: 240.0 / 255.0, b: 241.0 / 255.0, a: 1.0},
+             index: CYAN,
+         };
+         let yellow = Cell {
+             color: RGBA {r: 240.0 / 255.0, g: 242.0 / 255.0, b: 0.0, a: 1.0},
+             index: YELLOW,
+         };
+         let purple = Cell {
+             color: RGBA {r: 161.0 / 255.0, g: 0.0, b: 244.0 / 255.0, a: 1.0},
+             index: PURPLE,
+         };
+         let green = Cell {
+             color: RGBA {r: 0.0, g: 242.0 / 255.0, b: 0.0, a: 1.0},
+             index: GREEN,
+         };
+         let red = Cell {
+             color: RGBA {r: 243.0 / 255.0, g: 0.0, b: 0.0, a: 1.0},
+             index: RED,
+         };
+         let blue = Cell {
+             color: RGBA {r: 0.0, g: 0.0, b: 244.0 / 255.0, a: 1.0},
+             index: BLUE,
+         };
+         let orange = Cell {
+             color: RGBA {r: 242.0 / 255.0, g: 161.0 / 255.0, b: 0.0, a: 1.0},
+             index: ORANGE,
+         };
 
         // NOTE(coeuvre): Bitmap data for blocks. The origin is left-bottom corner.
         //
@@ -825,7 +843,7 @@ impl Playfield {
         }
     }
 
-    pub fn update(&mut self, renderer: &mut SoftwareRenderer, dt: f32, x: i32, y: i32) {
+    pub fn update(&mut self, renderer: &mut SoftwareRenderer, dt: f32, blocks: &Bitmap, x: i32, y: i32) {
         match self.state.top() {
             &PlayfieldState::Falling => {
                 if self.block.is_valid_position(self.falling_block.x,
@@ -849,7 +867,7 @@ impl Playfield {
             _ => {}
         }
 
-        let block_size_in_pixels = 32i32;
+        let block_size_in_pixels = blocks.height() as i32;
         let width = self.block.width as i32 * block_size_in_pixels;
         let height = (self.block.height) as i32 * block_size_in_pixels;
 
@@ -862,11 +880,11 @@ impl Playfield {
                 let y_offset = (block.height - row) as i32 * block_size_in_pixels;
                 let x = x + x_offset;
                 let y = y + (height - y_offset);
-                renderer.fill_rect(x + 1,
-                                   y + 1,
-                                   x + block_size_in_pixels,
-                                   y + block_size_in_pixels,
-                                   cell.color);
+                renderer.blit_sub_bitmap(x + 1, y + 1,
+                                         block_size_in_pixels * cell.index,
+                                         0,
+                                         block_size_in_pixels,
+                                         block_size_in_pixels, blocks);
             }
         }
 
@@ -897,11 +915,11 @@ impl Playfield {
                 let y_offset = (self.falling_block.y + row as i32) * block_size_in_pixels;
                 let x = x + x_offset;
                 let y = y + y_offset;
-                renderer.fill_rect(x + 1,
-                                   y + 1,
-                                   x + block_size_in_pixels,
-                                   y + block_size_in_pixels,
-                                   cell.color);
+                renderer.blit_sub_bitmap(x + 1, y + 1,
+                                         block_size_in_pixels * cell.index,
+                                         0,
+                                         block_size_in_pixels,
+                                         block_size_in_pixels, blocks);
             }
         }
 
@@ -911,11 +929,11 @@ impl Playfield {
             let y_offset = (row as i32) * block_size_in_pixels;
             let x = x + x_offset;
             let y = y + y_offset;
-            renderer.fill_rect(x + 1,
-                               y + 1,
-                               x + block_size_in_pixels,
-                               y + block_size_in_pixels,
-                               cell.color);
+            renderer.blit_sub_bitmap(x + 1, y + 1,
+                                     block_size_in_pixels * cell.index,
+                                     0,
+                                     block_size_in_pixels,
+                                     block_size_in_pixels, blocks);
         }
 
         let color = RGBA {
@@ -957,11 +975,11 @@ impl Playfield {
                 let y_offset = (block.height - row) as i32 * block_size_in_pixels;
                 let x = x + x_offset;
                 let y = y + (height - y_offset) - i as i32 * 4 * block_size_in_pixels;
-                renderer.fill_rect(x + 1,
-                                   y + 1,
-                                   x + block_size_in_pixels,
-                                   y + block_size_in_pixels,
-                                   cell.color);
+                renderer.blit_sub_bitmap(x + 1, y + 1,
+                                         block_size_in_pixels * cell.index,
+                                         0,
+                                         block_size_in_pixels,
+                                         block_size_in_pixels, blocks);
             }
         }
     }
@@ -969,16 +987,20 @@ impl Playfield {
 
 
 pub struct Retris {
+    blocks: Bitmap,
     playfield: Playfield,
 }
 
 impl Retris {
     pub fn new() -> Retris {
-        Retris { playfield: Playfield::new(10, 20) }
+        Retris {
+            blocks: Bitmap::open("./assets/blocks.bmp").unwrap(),
+            playfield: Playfield::new(10, 20)
+        }
     }
 
     pub fn update(&mut self, renderer: &mut SoftwareRenderer, dt: f32) {
-        self.playfield.update(renderer, dt, 32, 32);
+        self.playfield.update(renderer, dt, &self.blocks, 32, 32);
     }
 }
 

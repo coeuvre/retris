@@ -2,6 +2,8 @@ use sdl2::pixels::PixelFormatEnum;
 use sdl2::rect::Rect;
 use sdl2::render::{Renderer, Texture};
 
+use bitmap::Bitmap;
+
 fn clamp(value: i32, min: i32, max: i32) -> i32 {
     if value < min {
         0
@@ -103,6 +105,36 @@ impl<'a> SoftwareRenderer<'a> {
             }
         }
     }
+
+    pub fn blit_bitmap(&mut self, x: i32, y: i32, bitmap: &Bitmap) {
+        self.blit_sub_bitmap(x, y, 0, 0, bitmap.width() as i32, bitmap.height() as i32, bitmap);
+    }
+
+    pub fn blit_sub_bitmap(&mut self, dst_x: i32, dst_y: i32,
+                           src_x: i32, src_y: i32, width: i32, height: i32,
+                           bitmap: &Bitmap) {
+        // TODO(coeuvre): Clip
+
+        assert!(dst_x >= 0 && dst_x < self.width);
+        assert!(dst_y >= 0 && dst_y < self.height);
+
+        let x_min = dst_x;
+        let x_max = dst_x + width as i32;
+        let y_min = dst_y;
+        let y_max = dst_y + height as i32;
+
+        for y in y_min..y_max {
+            for x in x_min..x_max {
+                let color = bitmap.get((src_x + (x - x_min)) as u32, (src_y + (y - y_min)) as u32);
+                self.set(x, y, color);
+            }
+        }
+    }
+
+    pub fn set(&mut self, x: i32, y: i32, color: RGBA) {
+        let y = self.height - y - 1;
+        self.pixels[(y * self.width + x) as usize] = color.into_u32();
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -123,5 +155,30 @@ impl RGBA {
         let b = (self.b * 255.0) as u8 as u32;
         let a = (self.a * 255.0) as u8 as u32;
         (r << 24) | (g << 16) | (b << 8) | a
+    }
+}
+
+pub fn rgba<C: IntoColorComponent>(r: C, g: C, b: C, a: C) -> RGBA {
+    RGBA {
+        r: r.into_color_component(),
+        g: g.into_color_component(),
+        b: b.into_color_component(),
+        a: a.into_color_component(),
+    }
+}
+
+pub trait IntoColorComponent {
+    fn into_color_component(self) -> f32;
+}
+
+impl IntoColorComponent for f32 {
+    fn into_color_component(self) -> f32 {
+        self
+    }
+}
+
+impl IntoColorComponent for u8 {
+    fn into_color_component(self) -> f32 {
+        self as f32 / 255.0
     }
 }
