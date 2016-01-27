@@ -125,9 +125,7 @@ impl Block {
         false
     }
 
-    pub fn lock_block(&mut self, x: i32, y: i32, block: &Block) {
-        self.set_with_block(x, y, block);
-
+    pub fn get_break_lines(&self) -> Vec<usize> {
         let mut lines = vec![];
         for row in 0..self.height {
             let mut is_empty_line = true;
@@ -148,7 +146,11 @@ impl Block {
         }
 
         lines.reverse();
-        for row in lines {
+        lines
+    }
+
+    pub fn break_lines(&mut self) {
+        for row in self.get_break_lines() {
             for row in row + 1..self.height {
                 for col in 0..self.width {
                     let cell = self.get(col, row).map(|b| b.clone());
@@ -616,6 +618,10 @@ impl Timer {
         self.elapsed >= self.interval
     }
 
+    pub fn percent(&self) -> f32 {
+        self.elapsed / self.interval
+    }
+
     pub fn reset(&mut self) {
         self.elapsed = 0.0;
     }
@@ -650,6 +656,10 @@ pub struct Playfield {
     gravity_delay: Timer,
     lock_delay: Timer,
     max_lock_delay: Timer,
+
+    breaking_line_delay: Timer,
+    blink_interval: Timer,
+    is_blink: bool,
 }
 
 impl Playfield {
@@ -678,6 +688,10 @@ impl Playfield {
             gravity_delay: Timer::new(gravity_to_delay(0.015625)),
             lock_delay: Timer::new(frames_to_seconds(30.0)),
             max_lock_delay: Timer::new(frames_to_seconds(60.0)),
+
+            breaking_line_delay: Timer::new(0.25),
+            blink_interval: Timer::new(0.05),
+            is_blink: false,
         }
     }
 
@@ -727,12 +741,10 @@ impl Playfield {
                 self.state.set(PlayfieldState::Lost);
                 return;
             }
-            self.block.lock_block(x, y, block);
+            // Lock the block
+            self.block.set_with_block(x, y, block);
         }
-        self.can_hold_falling_block = true;
-        self.spawn_falling_block();
-        // TODO(coeuvre): Should set state to Spawning
-        self.state.set(PlayfieldState::Falling);
+        self.state.set(PlayfieldState::Breaking);
     }
 
     pub fn move_falling_block(&mut self, movement: Movement) {
@@ -843,7 +855,14 @@ impl Playfield {
         }
     }
 
+    fn change_to_falling_state(&mut self) {
+        self.can_hold_falling_block = true;
+        self.spawn_falling_block();
+        self.state.set(PlayfieldState::Falling);
+    }
+
     pub fn update(&mut self, renderer: &mut SoftwareRenderer, dt: f32, blocks: &Bitmap, x: i32, y: i32) {
+        let mut breaking_lines = vec![];
         match self.state.top() {
             &PlayfieldState::Falling => {
                 if self.block.is_valid_position(self.falling_block.x,
@@ -862,6 +881,26 @@ impl Playfield {
                 self.max_lock_delay.tick(dt);
                 if self.lock_delay.is_expired() || self.max_lock_delay.is_expired() {
                     self.lock_falling_block();
+                }
+            }
+            &PlayfieldState::Breaking => {
+                self.breaking_line_delay.tick(dt);
+                self.blink_interval.tick(dt);
+                if self.blink_interval.is_expired() {
+                    self.blink_interval.reset();
+                    self.is_blink = !self.is_blink;
+                }
+
+                breaking_lines = self.block.get_break_lines();
+                if breaking_lines.len() == 0 {
+                    self.breaking_line_delay.reset();
+                    self.blink_interval.reset();
+                    self.change_to_falling_state();
+                } else if self.breaking_line_delay.is_expired() {
+                    self.breaking_line_delay.reset();
+                    self.blink_interval.reset();
+                    self.block.break_lines();
+                    self.change_to_falling_state();
                 }
             }
             _ => {}
@@ -891,55 +930,67 @@ impl Playfield {
 
         let x = x + 5 * block_size_in_pixels;
 
-        // Falling block
-        let block = self.block_template.block(&self.falling_block.template);
-        let (ghost_x, ghost_y) = self.block.get_ghost_block_pos(self.falling_block.x, self.falling_block.y, block);
+        if let &PlayfieldState::Falling = self.state.top() {
+            // Falling block
+            let block = self.block_template.block(&self.falling_block.template);
+            let (ghost_x, ghost_y) = self.block.get_ghost_block_pos(self.falling_block.x, self.falling_block.y, block);
 
-        for (col, row, cell) in block_iter!(block) {
-            // Ghost
-            {
-                let x_offset = (ghost_x + col as i32) * block_size_in_pixels;
-                let y_offset = (ghost_y + row as i32) * block_size_in_pixels;
-                let x = x + x_offset;
-                let y = y + y_offset;
-                renderer.rect(x + 1,
-                              y + 1,
-                              x + block_size_in_pixels - 1,
-                              y + block_size_in_pixels - 1,
-                              cell.color);
-            }
+            for (col, row, cell) in block_iter!(block) {
+                // Ghost
+                {
+                    let x_offset = (ghost_x + col as i32) * block_size_in_pixels;
+                    let y_offset = (ghost_y + row as i32) * block_size_in_pixels;
+                    let x = x + x_offset;
+                    let y = y + y_offset;
+                    renderer.rect(x + 1,
+                                  y + 1,
+                                  x + block_size_in_pixels - 1,
+                                  y + block_size_in_pixels - 1,
+                                  cell.color);
+                }
 
-            // Simply clip the block
-            if self.falling_block.y + (row as i32) < self.block.height as i32 {
-                let x_offset = (self.falling_block.x + col as i32) * block_size_in_pixels;
-                let y_offset = (self.falling_block.y + row as i32) * block_size_in_pixels;
-                let x = x + x_offset;
-                let y = y + y_offset;
-                renderer.blit_sub_bitmap(x + 1, y + 1,
-                                         block_size_in_pixels * cell.index,
-                                         0,
-                                         block_size_in_pixels,
-                                         block_size_in_pixels, blocks);
+                // Simply clip the block
+                if self.falling_block.y + (row as i32) < self.block.height as i32 {
+                    let x_offset = (self.falling_block.x + col as i32) * block_size_in_pixels;
+                    let y_offset = (self.falling_block.y + row as i32) * block_size_in_pixels;
+                    let x = x + x_offset;
+                    let y = y + y_offset;
+                    renderer.blit_sub_bitmap(x + 1, y + 1,
+                                             block_size_in_pixels * cell.index,
+                                             0,
+                                             block_size_in_pixels,
+                                             block_size_in_pixels, blocks);
+                }
             }
         }
 
         // Fixed cells
         for (col, row, cell) in block_iter!(self.block) {
+            let mut alpha = 1.0;
+            if breaking_lines.contains(&row) {
+                if self.is_blink {
+                    continue;
+                }
+
+                alpha = 0.5;
+            }
+
             let x_offset = (col as i32) * block_size_in_pixels;
             let y_offset = (row as i32) * block_size_in_pixels;
             let x = x + x_offset;
             let y = y + y_offset;
-            renderer.blit_sub_bitmap(x + 1, y + 1,
-                                     block_size_in_pixels * cell.index,
-                                     0,
-                                     block_size_in_pixels,
-                                     block_size_in_pixels, blocks);
+            renderer.blit_sub_bitmap_alpha(x + 1, y + 1,
+                                           block_size_in_pixels * cell.index,
+                                           0,
+                                           block_size_in_pixels,
+                                           block_size_in_pixels, blocks,
+                                           alpha);
         }
 
         let color = RGBA {
-            r: 0.6,
-            g: 0.6,
-            b: 0.6,
+            r: 0.2,
+            g: 0.2,
+            b: 0.2,
             a: 1.0,
         };
 

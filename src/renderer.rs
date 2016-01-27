@@ -110,9 +110,9 @@ impl<'a> SoftwareRenderer<'a> {
         self.blit_sub_bitmap(x, y, 0, 0, bitmap.width() as i32, bitmap.height() as i32, bitmap);
     }
 
-    pub fn blit_sub_bitmap(&mut self, dst_x: i32, dst_y: i32,
+    pub fn blit_sub_bitmap_alpha(&mut self, dst_x: i32, dst_y: i32,
                            src_x: i32, src_y: i32, width: i32, height: i32,
-                           bitmap: &Bitmap) {
+                           bitmap: &Bitmap, alpha: f32) {
         // TODO(coeuvre): Clip
 
         assert!(dst_x >= 0 && dst_x < self.width);
@@ -125,10 +125,26 @@ impl<'a> SoftwareRenderer<'a> {
 
         for y in y_min..y_max {
             for x in x_min..x_max {
-                let color = bitmap.get((src_x + (x - x_min)) as u32, (src_y + (y - y_min)) as u32);
-                self.set(x, y, color);
+                let dst = self.get(x, y);
+                let src = bitmap.get((src_x + (x - x_min)) as u32, (src_y + (y - y_min)) as u32);
+                let r = alpha * src.r + (1.0 - alpha) * dst.r;
+                let g = alpha * src.g + (1.0 - alpha) * dst.g;
+                let b = alpha * src.b + (1.0 - alpha) * dst.b;
+                let a = src.a;
+                self.set(x, y, rgba(r, g, b, a));
             }
         }
+    }
+
+    pub fn blit_sub_bitmap(&mut self, dst_x: i32, dst_y: i32,
+                           src_x: i32, src_y: i32, width: i32, height: i32,
+                           bitmap: &Bitmap) {
+        self.blit_sub_bitmap_alpha(dst_x, dst_y, src_x, src_y, width, height, bitmap, 1.0);
+    }
+
+    pub fn get(&mut self, x: i32, y: i32) -> RGBA {
+        let y = self.height - y - 1;
+        RGBA::from_u32(self.pixels[(y * self.width + x) as usize])
     }
 
     pub fn set(&mut self, x: i32, y: i32, color: RGBA) {
@@ -155,6 +171,14 @@ impl RGBA {
         let b = (self.b * 255.0) as u8 as u32;
         let a = (self.a * 255.0) as u8 as u32;
         (r << 24) | (g << 16) | (b << 8) | a
+    }
+
+    pub fn from_u32(color: u32) -> RGBA {
+        let r = ((color & 0xFF000000) >> 24) as u8;
+        let g = ((color & 0x00FF0000) >> 16) as u8;
+        let b = ((color & 0x0000FF00) >> 8) as u8;
+        let a = ((color & 0x000000FF) >> 0) as u8;
+        rgba(r, g, b, a)
     }
 }
 
