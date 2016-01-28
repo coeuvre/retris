@@ -1,5 +1,3 @@
-#![feature(custom_attribute, stmt_expr_attributes)]
-
 extern crate rand;
 extern crate sdl2;
 extern crate time;
@@ -9,11 +7,13 @@ use sdl2::keyboard::Keycode;
 
 use time::PreciseTime;
 
-use renderer::*;
 use bitmap::*;
+use renderer::*;
+use state::*;
 
-pub mod renderer;
 pub mod bitmap;
+pub mod renderer;
+pub mod state;
 
 const CYAN: i32 = 6;
 const YELLOW: i32 = 0;
@@ -22,6 +22,283 @@ const GREEN: i32 = 4;
 const RED: i32 = 2;
 const BLUE: i32 = 5;
 const ORANGE: i32 = 1;
+
+pub struct Retris {
+    blocks: Bitmap,
+    playfield: Playfield,
+}
+
+impl Retris {
+    pub fn new() -> Retris {
+        let blocks = Bitmap::open("./assets/blocks.bmp").unwrap();
+        Retris {
+            playfield: Playfield::new(10, 20, blocks.height() as i32),
+            blocks: blocks,
+        }
+    }
+}
+
+pub struct Context {
+    pub dt: f32,
+    pub renderer: SoftwareRenderer,
+    pub events: Vec<Event>,
+}
+
+pub struct Prepare {
+    countdown: Timer,
+}
+
+impl Prepare {
+    pub fn new() -> Prepare {
+        Prepare {
+            countdown: Timer::new(0.0),
+        }
+    }
+}
+
+impl State for Prepare {
+    type Context = Context;
+    type Game = Retris;
+
+    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<Context, Retris> {
+        self.countdown.tick(ctx.dt);
+
+        println!("coutndown: {:.2}", self.countdown.elapsed());
+
+        if self.countdown.is_expired() {
+            let template = game.playfield.block_template.generate();
+            let bottom = game.playfield.block_template.block(&template).bottom();
+            game.playfield.falling_block = FallingBlock::new(3, 20 - bottom as i32, template);
+
+            return Trans::switch(Falling::new());
+        }
+
+        Trans::none()
+    }
+}
+
+fn handle_move_event(event: &Event, playfield: &mut Playfield) {
+    match event {
+        &Event::KeyDown {keycode: Some(Keycode::Up), ..} |
+        &Event::KeyDown {keycode: Some(Keycode::Z), ..} => {
+            let mut new_template = playfield.falling_block.template;
+            if let &Event::KeyDown {keycode: Some(Keycode::Up), ..} = event {
+                new_template.rrotate();
+            } else {
+                new_template.lrotate();
+            }
+            let block = playfield.block_template.block(&new_template);
+            let table = playfield.block_template.wall_kick_table(&playfield.falling_block.template,
+                                                                 &new_template);
+            for &(dx, dy) in table {
+                let x = playfield.falling_block.x + dx;
+                let y = playfield.falling_block.y + dy;
+                if playfield.block.is_valid_position(x, y, block) {
+                    playfield.falling_block.x = x;
+                    playfield.falling_block.y = y;
+                    playfield.falling_block.template = new_template;
+                    break;
+                }
+            }
+        }
+        &Event::KeyDown {keycode: Some(Keycode::Left), ..} => {
+            let block = playfield.block_template.block(&playfield.falling_block.template);
+            if playfield.block.is_valid_position(playfield.falling_block.x - 1,
+                                                 playfield.falling_block.y,
+                                                 block) {
+                playfield.falling_block.left();
+            }
+        }
+        &Event::KeyDown {keycode: Some(Keycode::Right), ..} => {
+            let block = playfield.block_template.block(&playfield.falling_block.template);
+            if playfield.block.is_valid_position(playfield.falling_block.x + 1,
+                                                 playfield.falling_block.y,
+                                                 block) {
+                playfield.falling_block.right();
+            }
+        }
+        _ => {}
+    }
+}
+
+pub struct Falling {
+    gravity_delay: Timer,
+}
+
+impl Falling {
+    pub fn new() -> Falling {
+        Falling {
+            gravity_delay: Timer::new(gravity_to_delay(0.015625)),
+        }
+    }
+}
+
+impl State for Falling {
+    type Context = Context;
+    type Game = Retris;
+
+    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<Context, Retris> {
+        let mut trans = Trans::none();
+        let dt = ctx.dt;
+        let ref mut renderer = ctx.renderer;
+        let ref mut playfield = game.playfield;
+
+        assert!(playfield.block.is_valid_position(playfield.falling_block.x,
+                                                  playfield.falling_block.y - 1,
+                                                  &playfield.block_template.block(&playfield.falling_block.template)));
+
+        for event in &ctx.events {
+            handle_move_event(event, playfield);
+            match event {
+                &Event::KeyDown {keycode: Some(Keycode::Down), ..} => {
+                    // NOTE(coeuvre): No need to check whether position (x, y - 1)
+                    // is valid here because we check it every frame.
+                    playfield.falling_block.down();
+                    self.gravity_delay.reset();
+                }
+                &Event::KeyDown {keycode: Some(Keycode::Space), ..} => {
+                    let (x, y) = playfield.block
+                                          .get_ghost_block_pos(playfield.falling_block.x,
+                                                               playfield.falling_block.y,
+                                                               playfield.block_template.block(&playfield.falling_block.template));
+                    playfield.falling_block.move_to(x, y);
+                    // Partial lock out
+                    if playfield.block.is_out_of_bounds(x, y, playfield.block_template.block(&playfield.falling_block.template)) {
+                        trans = Trans::switch(Lost);
+                    } else {
+                        // Lock the block
+                        playfield.block.set_with_block(x, y, playfield.block_template.block(&playfield.falling_block.template));
+
+                        let lines = playfield.block.get_break_lines();
+                        if lines.len() > 0 {
+                            trans = Trans::switch(Breaking::new(lines));
+                        } else {
+                            playfield.spawn_falling_block();
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if trans.is_none() {
+            self.gravity_delay.tick(dt);
+            if self.gravity_delay.is_expired() {
+                playfield.falling_block.down();
+                self.gravity_delay.reset();
+            }
+
+            if !playfield.block.is_valid_position(playfield.falling_block.x,
+                                                  playfield.falling_block.y - 1,
+                                                  &playfield.block_template.block(&playfield.falling_block.template)) {
+                trans = Trans::switch(Locking::new());
+            }
+
+            playfield.render_falling_block(renderer, 32, 32, &game.blocks);
+        }
+
+        playfield.render(renderer, 32, 32, &game.blocks);
+
+        trans
+    }
+}
+
+pub struct Locking {
+    lock_delay: Timer,
+}
+
+impl Locking {
+    pub fn new() -> Locking {
+        Locking {
+            lock_delay: Timer::new(frames_to_seconds(30.0)),
+        }
+    }
+}
+
+impl State for Locking {
+    type Context = Context;
+    type Game = Retris;
+
+    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<Context, Retris> {
+        let mut trans = Trans::none();
+        let dt = ctx.dt;
+        let ref mut renderer = ctx.renderer;
+        let ref mut playfield = game.playfield;
+
+        for event in &ctx.events {
+            handle_move_event(event, playfield);
+        }
+
+        if playfield.block.is_valid_position(playfield.falling_block.x,
+                                             playfield.falling_block.y - 1,
+                                             &playfield.block_template.block(&playfield.falling_block.template)) {
+            trans = Trans::switch(Falling::new());
+        }
+
+        self.lock_delay.tick(dt);
+        playfield.max_lock_delay.tick(dt);
+
+        if self.lock_delay.is_expired() || playfield.max_lock_delay.is_expired() {
+            let x = playfield.falling_block.x;
+            let y = playfield.falling_block.y;
+
+            // Partial lock out
+            if playfield.block.is_out_of_bounds(x, y, playfield.block_template.block(&playfield.falling_block.template)) {
+                trans = Trans::switch(Lost);
+            } else {
+                // Lock the block
+                playfield.block.set_with_block(x, y, playfield.block_template.block(&playfield.falling_block.template));
+
+                let lines = playfield.block.get_break_lines();
+                if lines.len() > 0 {
+                    trans = Trans::switch(Breaking::new(lines));
+                } else {
+                    playfield.spawn_falling_block();
+                    trans = Trans::switch(Falling::new());
+                }
+
+            }
+        }
+
+        playfield.render_falling_block(renderer, 32, 32, &game.blocks);
+        playfield.render(renderer, 32, 32, &game.blocks);
+        trans
+    }
+}
+
+pub struct Breaking {
+    lines: Vec<usize>,
+}
+
+impl Breaking {
+    pub fn new(lines: Vec<usize>) -> Breaking {
+        Breaking {
+            lines: lines,
+        }
+    }
+}
+
+impl State for Breaking {
+    type Context = Context;
+    type Game = Retris;
+
+    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<Context, Retris> {
+        let mut trans = Trans::none();
+        let ref mut renderer = ctx.renderer;
+        let ref mut playfield = game.playfield;
+
+        playfield.render(renderer, 32, 32, &game.blocks);
+
+        trans
+    }
+}
+
+pub struct Lost;
+
+impl State for Lost {
+    type Context = Context;
+    type Game = Retris;
+}
 
 #[derive(Copy, Clone)]
 pub struct Cell {
@@ -215,7 +492,6 @@ impl BlockTemplate {
         //
         //   Using SRS described at https://tetris.wiki/SRS.
         //
-        #[rustfmt_skip]
         BlockTemplate {
             templates: [
                 // Cyan I
@@ -494,6 +770,14 @@ pub struct BlockTemplateRef {
 }
 
 impl BlockTemplateRef {
+    pub fn none() -> BlockTemplateRef {
+        BlockTemplateRef {
+            shape: 0,
+            order: 0,
+            order_max: 0,
+        }
+    }
+
     pub fn rrotate(&mut self) {
         self.order = (self.order + 1) % self.order_max;
     }
@@ -515,11 +799,19 @@ pub struct FallingBlock {
 }
 
 impl FallingBlock {
-    pub fn new(template: BlockTemplateRef) -> FallingBlock {
+    pub fn none() -> FallingBlock {
         FallingBlock {
-            template: template,
+            template: BlockTemplateRef::none(),
             x: 0,
             y: 0,
+        }
+    }
+
+    pub fn new(x: i32, y: i32, template: BlockTemplateRef) -> FallingBlock {
+        FallingBlock {
+            template: template,
+            x: x,
+            y: y,
         }
     }
 
@@ -555,13 +847,13 @@ pub enum Movement {
     Hold,
 }
 
-pub struct State<T> {
+pub struct StateStack<T> {
     stack: Vec<T>,
 }
 
-impl<T> State<T> {
-    pub fn new(init: T) -> State<T> {
-        State {
+impl<T> StateStack<T> {
+    pub fn new(init: T) -> StateStack<T> {
+        StateStack {
             stack: vec![init],
         }
     }
@@ -618,6 +910,10 @@ impl Timer {
         self.elapsed >= self.interval
     }
 
+    pub fn elapsed(&self) -> f32 {
+        self.elapsed
+    }
+
     pub fn percent(&self) -> f32 {
         self.elapsed / self.interval
     }
@@ -641,7 +937,7 @@ fn gravity_to_delay(gravity: f32) -> f32 {
 
 
 pub struct Playfield {
-    state: State<PlayfieldState>,
+    state: StateStack<PlayfieldState>,
 
     block: Block,
 
@@ -658,12 +954,15 @@ pub struct Playfield {
     max_lock_delay: Timer,
 
     breaking_line_delay: Timer,
+    breaking_lines: Vec<usize>,
     blink_interval: Timer,
     is_blink: bool,
+
+    block_size_in_pixels: i32,
 }
 
 impl Playfield {
-    pub fn new(width: usize, height: usize) -> Playfield {
+    pub fn new(width: usize, height: usize, block_size_in_pixels: i32) -> Playfield {
         let block_template = BlockTemplate::new();
         let falling_block = Playfield::generate_falling_block(&block_template);
         let next_templates = vec![
@@ -673,7 +972,7 @@ impl Playfield {
         ];
 
         Playfield {
-            state: State::new(PlayfieldState::Falling),
+            state: StateStack::new(PlayfieldState::Falling),
 
             block: Block::new(width, height),
 
@@ -690,8 +989,11 @@ impl Playfield {
             max_lock_delay: Timer::new(frames_to_seconds(60.0)),
 
             breaking_line_delay: Timer::new(0.25),
+            breaking_lines: vec![],
             blink_interval: Timer::new(0.05),
             is_blink: false,
+
+            block_size_in_pixels: block_size_in_pixels,
         }
     }
 
@@ -721,10 +1023,8 @@ impl Playfield {
 
     fn generate_falling_block_with_template(block_template: &BlockTemplate,
                                             template: BlockTemplateRef) -> FallingBlock{
-        let mut falling_block = FallingBlock::new(template);
-        let bottom = block_template.block(&falling_block.template).bottom();
-        falling_block.move_to(3, 20 - bottom as i32);
-        falling_block
+        let bottom = block_template.block(&template).bottom();
+        FallingBlock::new(3, 20 - bottom as i32, template)
     }
 
     fn lock_falling_block(&mut self) {
@@ -861,9 +1161,152 @@ impl Playfield {
         self.state.set(PlayfieldState::Falling);
     }
 
-    pub fn update(&mut self, renderer: &mut SoftwareRenderer, dt: f32, blocks: &Bitmap, x: i32, y: i32) {
-        let mut breaking_lines = vec![];
+    fn width_in_pixels(&self) -> i32 {
+        self.block.width as i32 * self.block_size_in_pixels
+    }
+
+    fn height_in_pixels(&self) -> i32 {
+        self.block.height as i32 * self.block_size_in_pixels
+    }
+
+    pub fn render_held_blocks(&self, renderer: &mut SoftwareRenderer, x: i32, y: i32, blocks_bitmap: &Bitmap) {
+        if let Some(held_template) = self.held_template {
+            let block = self.block_template.block(&held_template);
+
+            for (col, row, cell) in block_iter!(block) {
+                let x_offset = col as i32 * self.block_size_in_pixels;
+                let y_offset = (block.height - row) as i32 * self.block_size_in_pixels;
+                let x = x + x_offset;
+                let y = y + (self.height_in_pixels() - y_offset);
+                renderer.blit_sub_bitmap(x + 1, y + 1,
+                                         self.block_size_in_pixels * cell.index,
+                                         0,
+                                         self.block_size_in_pixels,
+                                         self.block_size_in_pixels, blocks_bitmap);
+            }
+        }
+    }
+
+    pub fn render_falling_block(&self, renderer: &mut SoftwareRenderer, x: i32, y: i32, blocks_bitmap: &Bitmap) {
+        let x = self.x_offset_for_cells(x);
+        let block = self.block_template.block(&self.falling_block.template);
+        let (ghost_x, ghost_y) = self.block.get_ghost_block_pos(self.falling_block.x, self.falling_block.y, block);
+
+        for (col, row, cell) in block_iter!(block) {
+            // Ghost
+            {
+                let x_offset = (ghost_x + col as i32) * self.block_size_in_pixels;
+                let y_offset = (ghost_y + row as i32) * self.block_size_in_pixels;
+                let x = x + x_offset;
+                let y = y + y_offset;
+                renderer.rect(x + 1,
+                              y + 1,
+                              x + self.block_size_in_pixels - 1,
+                              y + self.block_size_in_pixels - 1,
+                              cell.color);
+            }
+
+            // Simply clip the block
+            if self.falling_block.y + (row as i32) < self.block.height as i32 {
+                let x_offset = (self.falling_block.x + col as i32) * self.block_size_in_pixels;
+                let y_offset = (self.falling_block.y + row as i32) * self.block_size_in_pixels;
+                let x = x + x_offset;
+                let y = y + y_offset;
+                renderer.blit_sub_bitmap(x + 1, y + 1,
+                                         self.block_size_in_pixels * cell.index,
+                                         0,
+                                         self.block_size_in_pixels,
+                                         self.block_size_in_pixels, blocks_bitmap);
+            }
+        }
+    }
+
+    pub fn render_cells(&self, renderer: &mut SoftwareRenderer, x: i32, y: i32, blocks_bitmap: &Bitmap) {
+        let x = self.x_offset_for_cells(x);
+        for (col, row, cell) in block_iter!(self.block) {
+            let mut alpha = 1.0;
+            if self.breaking_lines.contains(&row) {
+                if self.is_blink {
+                    continue;
+                }
+
+                alpha = 0.5;
+            }
+
+            let x_offset = (col as i32) * self.block_size_in_pixels;
+            let y_offset = (row as i32) * self.block_size_in_pixels;
+            let x = x + x_offset;
+            let y = y + y_offset;
+            renderer.blit_sub_bitmap_alpha(x + 1, y + 1,
+                                           self.block_size_in_pixels * cell.index,
+                                           0,
+                                           self.block_size_in_pixels,
+                                           self.block_size_in_pixels, blocks_bitmap,
+                                           alpha);
+        }
+    }
+
+    pub fn render_grids(&self, renderer: &mut SoftwareRenderer, x: i32, y: i32, color: RGBA) {
+        let x = self.x_offset_for_cells(x);
+        for row in 1..self.block.height {
+            let y_offset = row as i32 * self.block_size_in_pixels;
+            renderer.hline(y + y_offset, x, x + self.width_in_pixels(), color);
+        }
+
+        for col in 1..self.block.width {
+            let x_offset = col as i32 * self.block_size_in_pixels;
+            renderer.vline(x + x_offset, y, y + self.height_in_pixels(), color);
+        }
+    }
+
+    pub fn render_borders(&self, renderer: &mut SoftwareRenderer, x: i32, y: i32, color: RGBA) {
+        let x = self.x_offset_for_cells(x);
+        renderer.rect(x, y,
+                      x + self.width_in_pixels(),
+                      y + self.height_in_pixels(),
+                      color);
+    }
+
+    pub fn render_next_blocks(&self, renderer: &mut SoftwareRenderer, x: i32, y: i32, blocks_bitmap: &Bitmap) {
+        let x = self.x_offset_for_next_blocks(x);
+        for (i, template) in self.next_templates.iter().enumerate() {
+            let block = self.block_template.block(template);
+
+            for (col, row, cell) in block_iter!(block) {
+                let x_offset = col as i32 * self.block_size_in_pixels;
+                let y_offset = (block.height - row) as i32 * self.block_size_in_pixels;
+                let x = x + x_offset;
+                let y = y + (self.height_in_pixels() - y_offset) -
+                        i as i32 * 4 * self.block_size_in_pixels;
+                renderer.blit_sub_bitmap(x + 1, y + 1,
+                                         self.block_size_in_pixels * cell.index,
+                                         0,
+                                         self.block_size_in_pixels,
+                                         self.block_size_in_pixels, blocks_bitmap);
+            }
+        }
+    }
+
+    fn x_offset_for_cells(&self, x: i32) -> i32 {
+        x + 5 * self.block_size_in_pixels
+    }
+
+    fn x_offset_for_next_blocks(&self, x: i32) -> i32 {
+        self.x_offset_for_cells(x) + self.width_in_pixels() + self.block_size_in_pixels
+    }
+
+    pub fn render(&self, renderer: &mut SoftwareRenderer, x: i32, y: i32, blocks_bitmap: &Bitmap) {
+        self.render_held_blocks(renderer, x, y, blocks_bitmap);
+        self.render_cells(renderer, x, y, blocks_bitmap);
+        self.render_grids(renderer, x, y, rgba(0.2, 0.2, 0.2, 1.0));
+        self.render_borders(renderer, x, y, rgba(1.0, 1.0, 1.0, 1.0));
+        self.render_next_blocks(renderer, x, y, blocks_bitmap);
+    }
+
+    pub fn update(&mut self, dt: f32) {
+        self.breaking_lines = vec![];
         match self.state.top() {
+            /*
             &PlayfieldState::Falling => {
                 if self.block.is_valid_position(self.falling_block.x,
                                                 self.falling_block.y - 1,
@@ -883,6 +1326,7 @@ impl Playfield {
                     self.lock_falling_block();
                 }
             }
+            */
             &PlayfieldState::Breaking => {
                 self.breaking_line_delay.tick(dt);
                 self.blink_interval.tick(dt);
@@ -891,8 +1335,8 @@ impl Playfield {
                     self.is_blink = !self.is_blink;
                 }
 
-                breaking_lines = self.block.get_break_lines();
-                if breaking_lines.len() == 0 {
+                self.breaking_lines = self.block.get_break_lines();
+                if self.breaking_lines.len() == 0 {
                     self.breaking_line_delay.reset();
                     self.blink_interval.reset();
                     self.change_to_falling_state();
@@ -905,155 +1349,9 @@ impl Playfield {
             }
             _ => {}
         }
-
-        let block_size_in_pixels = blocks.height() as i32;
-        let width = self.block.width as i32 * block_size_in_pixels;
-        let height = (self.block.height) as i32 * block_size_in_pixels;
-
-        // Held template
-        if let Some(ref mut held_template) = self.held_template {
-            let block = self.block_template.block(&held_template);
-
-            for (col, row, cell) in block_iter!(block) {
-                let x_offset = col as i32 * block_size_in_pixels;
-                let y_offset = (block.height - row) as i32 * block_size_in_pixels;
-                let x = x + x_offset;
-                let y = y + (height - y_offset);
-                renderer.blit_sub_bitmap(x + 1, y + 1,
-                                         block_size_in_pixels * cell.index,
-                                         0,
-                                         block_size_in_pixels,
-                                         block_size_in_pixels, blocks);
-            }
-        }
-
-
-        let x = x + 5 * block_size_in_pixels;
-
-        if let &PlayfieldState::Falling = self.state.top() {
-            // Falling block
-            let block = self.block_template.block(&self.falling_block.template);
-            let (ghost_x, ghost_y) = self.block.get_ghost_block_pos(self.falling_block.x, self.falling_block.y, block);
-
-            for (col, row, cell) in block_iter!(block) {
-                // Ghost
-                {
-                    let x_offset = (ghost_x + col as i32) * block_size_in_pixels;
-                    let y_offset = (ghost_y + row as i32) * block_size_in_pixels;
-                    let x = x + x_offset;
-                    let y = y + y_offset;
-                    renderer.rect(x + 1,
-                                  y + 1,
-                                  x + block_size_in_pixels - 1,
-                                  y + block_size_in_pixels - 1,
-                                  cell.color);
-                }
-
-                // Simply clip the block
-                if self.falling_block.y + (row as i32) < self.block.height as i32 {
-                    let x_offset = (self.falling_block.x + col as i32) * block_size_in_pixels;
-                    let y_offset = (self.falling_block.y + row as i32) * block_size_in_pixels;
-                    let x = x + x_offset;
-                    let y = y + y_offset;
-                    renderer.blit_sub_bitmap(x + 1, y + 1,
-                                             block_size_in_pixels * cell.index,
-                                             0,
-                                             block_size_in_pixels,
-                                             block_size_in_pixels, blocks);
-                }
-            }
-        }
-
-        // Fixed cells
-        for (col, row, cell) in block_iter!(self.block) {
-            let mut alpha = 1.0;
-            if breaking_lines.contains(&row) {
-                if self.is_blink {
-                    continue;
-                }
-
-                alpha = 0.5;
-            }
-
-            let x_offset = (col as i32) * block_size_in_pixels;
-            let y_offset = (row as i32) * block_size_in_pixels;
-            let x = x + x_offset;
-            let y = y + y_offset;
-            renderer.blit_sub_bitmap_alpha(x + 1, y + 1,
-                                           block_size_in_pixels * cell.index,
-                                           0,
-                                           block_size_in_pixels,
-                                           block_size_in_pixels, blocks,
-                                           alpha);
-        }
-
-        let color = RGBA {
-            r: 0.2,
-            g: 0.2,
-            b: 0.2,
-            a: 1.0,
-        };
-
-        // Grids
-
-        for row in 1..self.block.height {
-            let y_offset = row as i32 * block_size_in_pixels;
-            renderer.hline(y + y_offset, x, x + width, color);
-        }
-
-        for col in 1..self.block.width {
-            let x_offset = col as i32 * block_size_in_pixels;
-            renderer.vline(x + x_offset, y, y + height, color);
-        }
-
-        // Border
-        let color = RGBA {
-            r: 1.0,
-            g: 1.0,
-            b: 1.0,
-            a: 1.0,
-        };
-
-        renderer.rect(x, y, x + width, y + height, color);
-
-        // Next templates
-        let x = x + width + block_size_in_pixels;
-        for (i, template) in self.next_templates.iter().enumerate() {
-            let block = self.block_template.block(template);
-
-            for (col, row, cell) in block_iter!(block) {
-                let x_offset = col as i32 * block_size_in_pixels;
-                let y_offset = (block.height - row) as i32 * block_size_in_pixels;
-                let x = x + x_offset;
-                let y = y + (height - y_offset) - i as i32 * 4 * block_size_in_pixels;
-                renderer.blit_sub_bitmap(x + 1, y + 1,
-                                         block_size_in_pixels * cell.index,
-                                         0,
-                                         block_size_in_pixels,
-                                         block_size_in_pixels, blocks);
-            }
-        }
     }
 }
 
-
-pub struct Retris {
-    blocks: Bitmap,
-    playfield: Playfield,
-}
-
-impl Retris {
-    pub fn new() -> Retris {
-        Retris {
-            blocks: Bitmap::open("./assets/blocks.bmp").unwrap(),
-            playfield: Playfield::new(10, 20)
-        }
-    }
-
-    pub fn update(&mut self, renderer: &mut SoftwareRenderer, dt: f32) {
-        self.playfield.update(renderer, dt, &self.blocks, 32, 32);
-    }
-}
 
 fn main() {
     let sdl2 = sdl2::init().unwrap();
@@ -1069,11 +1367,17 @@ fn main() {
 
     let renderer = window.renderer().present_vsync().build().unwrap();
 
-    let mut renderer = SoftwareRenderer::new(renderer, width, height);
-
-    let mut event_pump = sdl2.event_pump().unwrap();
+    let mut context = Context {
+        dt: 0.0,
+        renderer: SoftwareRenderer::new(renderer, width, height),
+        events: vec![],
+    };
 
     let mut retris = Retris::new();
+
+    let mut state_machine = StateMachine::new(Prepare::new());
+
+    let mut event_pump = sdl2.event_pump().unwrap();
 
     let mut frame_last = PreciseTime::now();
 
@@ -1084,6 +1388,7 @@ fn main() {
             match event {
                 Event::Quit {..} |
                 Event::KeyDown {keycode: Some(Keycode::Escape), ..} => break 'running,
+                /*
                 Event::KeyDown {keycode: Some(Keycode::P), ..} => {
                     match retris.playfield.state.top() {
                         &PlayfieldState::Paused => retris.playfield.resume(),
@@ -1111,15 +1416,19 @@ fn main() {
                 Event::KeyDown {keycode: Some(Keycode::Down), ..} => {
                     retris.playfield.move_falling_block(Movement::Down);
                 }
+                */
                 _ => {}
             }
+            context.events.push(event);
         }
 
         let now = PreciseTime::now();
-        let dt = frame_last.to(now).num_milliseconds() as f32 / 1000.0;
+        context.dt = frame_last.to(now).num_milliseconds() as f32 / 1000.0;
         frame_last = now;
-        retris.update(&mut renderer, dt);
-        renderer.present(width, height);
+        state_machine.update(&mut context, &mut retris);
+        context.renderer.present(width, height);
+
+        context.events.clear();
 
         let frame_end = PreciseTime::now();
         let _ = frame_start.to(frame_end);

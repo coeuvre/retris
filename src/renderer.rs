@@ -14,16 +14,16 @@ fn clamp(value: i32, min: i32, max: i32) -> i32 {
     }
 }
 
-pub struct SoftwareRenderer<'a> {
-    sdl_renderer: Renderer<'a>,
+pub struct SoftwareRenderer {
+    sdl_renderer: Renderer<'static>,
     buffer: Texture,
     pixels: Vec<u32>,
     width: i32,
     height: i32,
 }
 
-impl<'a> SoftwareRenderer<'a> {
-    pub fn new(renderer: Renderer<'a>, width: u32, height: u32) -> SoftwareRenderer<'a> {
+impl SoftwareRenderer {
+    pub fn new(renderer: Renderer<'static>, width: u32, height: u32) -> SoftwareRenderer {
         SoftwareRenderer {
             buffer: renderer.create_texture_streaming(PixelFormatEnum::RGBA8888, (width, height))
                             .unwrap(),
