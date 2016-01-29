@@ -100,20 +100,59 @@ impl State for Prepare {
     type Context = Context;
     type Game = Retris;
 
-    fn update(&mut self, ctx: &mut Context, _game: &mut Retris) -> Trans<Context, Retris> {
+    fn update(&mut self, ctx: &mut Context, _game: &mut Retris) -> Option<Trans<Context, Retris>> {
         self.countdown.tick(ctx.dt);
 
         println!("coutndown: {:.2}", self.countdown.elapsed());
 
         if self.countdown.is_expired() {
-            return switch(Falling::new());
+            return switch(Spawn::new());
         }
 
         None
     }
 }
 
-fn handle_common_event(event: Event, playfield: &mut Playfield) -> Trans<Context, Retris> {
+pub struct Spawn {
+    spawn_delay: Timer,
+}
+
+impl Spawn {
+    pub fn new() -> Spawn {
+        Spawn {
+            spawn_delay: Timer::new(0.0),
+        }
+    }
+}
+
+impl State for Spawn {
+    type Context = Context;
+    type Game = Retris;
+
+    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Option<Trans<Context, Retris>> {
+        let dt = ctx.dt;
+        let ref mut renderer = ctx.renderer;
+        let ref mut playfield = game.playfield;
+
+        self.spawn_delay.tick(dt);
+        if self.spawn_delay.is_expired() {
+            playfield.spawn_falling_block();
+
+            if playfield.can_move_falling_block_by(0, 0) {
+                return switch(Falling::new());
+            } else {
+                // NOTE(coeuvre): Block out
+                return switch(Lost);
+            }
+        }
+
+        playfield.render(renderer, 32, 32, &game.blocks);
+
+        None
+    }
+}
+
+fn handle_common_event(event: Event, playfield: &mut Playfield) -> Option<Trans<Context, Retris>> {
     match event {
         Event::KeyDown {keycode: Some(Keycode::P), ..} => {
             return push(Paused);
@@ -155,7 +194,7 @@ impl State for Falling {
     type Context = Context;
     type Game = Retris;
 
-    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<Context, Retris> {
+    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Option<Trans<Context, Retris>> {
         let dt = ctx.dt;
         let ref mut renderer = ctx.renderer;
         let ref mut playfield = game.playfield;
@@ -174,7 +213,7 @@ impl State for Falling {
                 }
                 _ => {
                     let trans = handle_common_event(event, playfield);
-                    if !trans.is_none() {
+                    if trans.is_some() {
                         return trans;
                     }
                 }
@@ -217,7 +256,7 @@ impl Locking {
         }
     }
 
-    fn lock(&mut self, playfield: &mut Playfield) -> Trans<Context, Retris> {
+    fn lock(&mut self, playfield: &mut Playfield) -> Option<Trans<Context, Retris>> {
         if playfield.is_falling_block_out_of_bounds() {
             // NOTE(coeuvre): Partial lock out
             switch(Lost)
@@ -227,10 +266,8 @@ impl Locking {
             if playfield.has_lines_to_break() {
                 switch(Breaking::new())
             } else {
-                playfield.spawn_falling_block();
-                switch(Falling::new())
+                switch(Spawn::new())
             }
-
         }
     }
 }
@@ -239,7 +276,7 @@ impl State for Locking {
     type Context = Context;
     type Game = Retris;
 
-    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<Context, Retris> {
+    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Option<Trans<Context, Retris>> {
         let dt = ctx.dt;
         let ref mut renderer = ctx.renderer;
         let ref mut playfield = game.playfield;
@@ -252,8 +289,8 @@ impl State for Locking {
 
         for event in ctx.events.poll() {
             let trans = handle_common_event(event, playfield);
-            if !trans.is_none() {
-                return trans
+            if trans.is_some() {
+                return trans;
             }
         }
 
@@ -290,7 +327,7 @@ impl State for Breaking {
     type Context = Context;
     type Game = Retris;
 
-    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<Context, Retris> {
+    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Option<Trans<Context, Retris>> {
         let dt = ctx.dt;
         let ref mut renderer = ctx.renderer;
         let ref mut playfield = game.playfield;
@@ -300,10 +337,8 @@ impl State for Breaking {
         self.breaking_line_delay.tick(dt);
         if self.breaking_line_delay.is_expired() {
             playfield.block.break_lines();
-            playfield.spawn_falling_block();
-            playfield.can_hold_falling_block = true;
             playfield.breaking_lines.clear();
-            return switch(Falling::new());
+            return switch(Spawn::new());
         }
 
         playfield.render(renderer, 32, 32, &game.blocks);
@@ -318,7 +353,7 @@ impl State for Paused {
     type Context = Context;
     type Game = Retris;
 
-    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<Context, Retris> {
+    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Option<Trans<Context, Retris>> {
         let ref mut renderer = ctx.renderer;
         let ref mut playfield = game.playfield;
 
@@ -343,7 +378,7 @@ impl State for Lost {
     type Context = Context;
     type Game = Retris;
 
-    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<Context, Retris> {
+    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Option<Trans<Context, Retris>> {
         let ref mut renderer = ctx.renderer;
         let ref mut playfield = game.playfield;
 
@@ -764,18 +799,6 @@ impl BlockTemplate {
         }
     }
 
-    pub fn generate(&self) -> BlockTemplateRef {
-        let shape = rand::random::<usize>() % self.templates.len();
-        let order = 0;
-        let order_max = self.templates[shape].len();
-
-        BlockTemplateRef {
-            shape: shape,
-            order: order,
-            order_max: order_max,
-        }
-    }
-
     pub fn block(&self, template: &BlockTemplateRef) -> &Block {
         &self.templates[template.shape][template.order]
     }
@@ -815,6 +838,43 @@ impl BlockTemplate {
     }
 }
 
+pub struct BlockTemplateGenerator {
+    next_templates: VecDeque<BlockTemplateRef>,
+}
+
+impl BlockTemplateGenerator {
+    pub fn new(block_template: &BlockTemplate) -> BlockTemplateGenerator {
+        BlockTemplateGenerator {
+            next_templates: vec![
+                BlockTemplateGenerator::generate_raw(block_template),
+                BlockTemplateGenerator::generate_raw(block_template),
+                BlockTemplateGenerator::generate_raw(block_template),
+            ].into_iter().collect(),
+        }
+    }
+
+    pub fn generate(&mut self, block_template: &BlockTemplate) -> BlockTemplateRef {
+        let new_template = BlockTemplateGenerator::generate_raw(block_template);
+        self.next_templates.push_back(new_template);
+        self.next_templates.pop_front().unwrap()
+    }
+
+    pub fn next_templates(&self) -> &[BlockTemplateRef] {
+        self.next_templates.as_slices().0
+    }
+
+    fn generate_raw(block_template: &BlockTemplate) -> BlockTemplateRef {
+        let shape = rand::random::<usize>() % block_template.templates.len();
+        let order = 0;
+        let order_max = block_template.templates[shape].len();
+        BlockTemplateRef {
+            shape: shape,
+            order: order,
+            order_max: order_max,
+        }
+    }
+}
+
 #[derive(Copy, Clone)]
 pub struct BlockTemplateRef {
     shape: usize,
@@ -823,18 +883,6 @@ pub struct BlockTemplateRef {
 }
 
 impl BlockTemplateRef {
-    pub fn none() -> BlockTemplateRef {
-        BlockTemplateRef {
-            shape: 0,
-            order: 0,
-            order_max: 0,
-        }
-    }
-
-    pub fn is_none(&self) -> bool {
-        self.shape == 0 && self.order == 0 && self.order_max == 0
-    }
-
     pub fn rrotate(&mut self) {
         self.order = (self.order + 1) % self.order_max;
     }
@@ -856,24 +904,12 @@ pub struct FallingBlock {
 }
 
 impl FallingBlock {
-    pub fn none() -> FallingBlock {
-        FallingBlock {
-            template: BlockTemplateRef::none(),
-            x: 0,
-            y: 0,
-        }
-    }
-
     pub fn new(x: i32, y: i32, template: BlockTemplateRef) -> FallingBlock {
         FallingBlock {
             template: template,
             x: x,
             y: y,
         }
-    }
-
-    pub fn is_none(&self) -> bool {
-        self.template.is_none() && self.x == 0 && self.y == 0
     }
 
     pub fn move_to(&mut self, x: i32, y: i32) {
@@ -937,10 +973,10 @@ fn gravity_to_delay(gravity: f32) -> f32 {
 pub struct Playfield {
     block: Block,
 
-    block_template: BlockTemplate,
+    falling_block: Option<FallingBlock>,
 
-    falling_block: FallingBlock,
-    next_templates: Vec<BlockTemplateRef>,
+    generator: BlockTemplateGenerator,
+    block_template: BlockTemplate,
 
     held_template: Option<BlockTemplateRef>,
     can_hold_falling_block: bool,
@@ -956,20 +992,13 @@ pub struct Playfield {
 impl Playfield {
     pub fn new(width: usize, height: usize, block_size_in_pixels: i32) -> Playfield {
         let block_template = BlockTemplate::new();
-        let falling_block = Playfield::generate_falling_block(&block_template);
-        let next_templates = vec![
-            block_template.generate(),
-            block_template.generate(),
-            block_template.generate(),
-        ];
-
         Playfield {
             block: Block::new(width, height),
 
-            block_template: block_template,
+            falling_block: None,
 
-            falling_block: falling_block,
-            next_templates: next_templates,
+            generator: BlockTemplateGenerator::new(&block_template),
+            block_template: block_template,
 
             held_template: None,
             can_hold_falling_block: true,
@@ -984,112 +1013,102 @@ impl Playfield {
     }
 
     fn spawn_falling_block(&mut self) {
-        let template = self.next_templates.remove(0);
-        self.next_templates.push(self.block_template.generate());
-        self.spawn_falling_block_with_template(template);
+        let template = self.generator.generate(&self.block_template);
+        self.spawn_falling_block_with(template);
     }
 
-    fn spawn_falling_block_with_template(&mut self, template: BlockTemplateRef) {
-        self.falling_block = Playfield::generate_falling_block_with_template(&self.block_template, template);
-        self.max_lock_delay.reset();
-        if !self.block.is_valid_position(self.falling_block.x,
-                                         self.falling_block.y,
-                                         self.block_template.block(&self.falling_block.template)) {
-            // TODO(coeuvre): Block out, we lost here
-            unreachable!();
-        }
-    }
-
-    fn generate_falling_block(block_template: &BlockTemplate) -> FallingBlock {
-        let template = block_template.generate();
-        Playfield::generate_falling_block_with_template(block_template, template)
-    }
-
-    fn generate_falling_block_with_template(block_template: &BlockTemplate,
-                                            template: BlockTemplateRef) -> FallingBlock{
-        let bottom = block_template.block(&template).bottom();
-        FallingBlock::new(3, 20 - bottom as i32, template)
+    fn spawn_falling_block_with(&mut self, template: BlockTemplateRef) {
+        let bottom = self.block_template.block(&template).bottom();
+        self.falling_block = Some(FallingBlock::new(3, self.block.height as i32 - bottom as i32, template));
     }
 
     pub fn drop_falling_block(&mut self) {
-        let (x, y) = self.get_ghost_block_pos();
-        self.falling_block.move_to(x, y);
+        if let Some(ref mut falling_block) = self.falling_block {
+            let (x, y) = self.block.get_ghost_block_pos(falling_block.x,
+                                                        falling_block.y,
+                                                        self.block_template.block(&falling_block.template));
+            falling_block.move_to(x, y);
+        }
     }
 
     pub fn hold_falling_block(&mut self) {
         if self.can_hold_falling_block {
-            let mut held_template = self.falling_block.template;
-            held_template.order = 0;
-            if self.held_template.is_none() {
-                self.spawn_falling_block();
-            } else {
-                let new_template = self.held_template.as_ref().unwrap().clone();
-                self.spawn_falling_block_with_template(new_template);
+            let falling_block = self.falling_block.take();
+            if let Some(falling_block) = falling_block {
+                let mut template = falling_block.template;
+                template.order = 0;
+                if let Some(held_template) = self.held_template.take() {
+                    self.spawn_falling_block_with(held_template);
+                } else {
+                    self.spawn_falling_block();
+                }
+                self.held_template = Some(template);
+                self.can_hold_falling_block = false;
             }
-            self.held_template = Some(held_template);
-            self.can_hold_falling_block = false;
         }
     }
 
     pub fn rotate_falling_block(&mut self, direction: i32) {
-        let mut new_template = self.falling_block.template;
-        if direction > 0 {
-            new_template.rrotate();
-        } else {
-            new_template.lrotate();
-        }
+        if let Some(ref mut falling_block) = self.falling_block {
+            let mut new_template = falling_block.template;
+            if direction > 0 {
+                new_template.rrotate();
+            } else {
+                new_template.lrotate();
+            }
 
-        let table = self.block_template.wall_kick_table(&self.falling_block.template,
-                                                        &new_template);
-        for &(dx, dy) in table {
-            if self.block.is_valid_position(self.falling_block.x + dx,
-                                            self.falling_block.y + dy,
-                                            &self.block_template
-                                                 .block(&new_template)) {
-                self.falling_block.move_by(dx, dy);
-                self.falling_block.template = new_template;
-                break;
+            let table = self.block_template.wall_kick_table(&falling_block.template,
+                                                            &new_template);
+            for &(dx, dy) in table {
+                if self.block.is_valid_position(falling_block.x + dx,
+                                                falling_block.y + dy,
+                                                &self.block_template
+                                                     .block(&new_template)) {
+                    falling_block.move_by(dx, dy);
+                    falling_block.template = new_template;
+                    break;
+                }
             }
         }
     }
 
     pub fn can_move_falling_block_by(&self, dx: i32, dy: i32) -> bool {
-        if self.falling_block.is_none() {
-            false
-        } else {
-            self.block.is_valid_position(self.falling_block.x + dx,
-                                         self.falling_block.y + dy,
+        if let Some(ref falling_block) = self.falling_block {
+            self.block.is_valid_position(falling_block.x + dx,
+                                         falling_block.y + dy,
                                          &self.block_template
-                                              .block(&self.falling_block.template))
+                                              .block(&falling_block.template))
+        } else {
+            false
         }
     }
 
     pub fn move_falling_block_by(&mut self, dx: i32, dy: i32) {
         if self.can_move_falling_block_by(dx, dy) {
-            self.falling_block.move_by(dx, dy);
+            self.falling_block.as_mut().unwrap().move_by(dx, dy);
         }
     }
 
-
-    pub fn get_ghost_block_pos(&self) -> (i32, i32) {
-        self.block.get_ghost_block_pos(self.falling_block.x,
-                                       self.falling_block.y,
-                                       self.block_template.block(&self.falling_block.template))
-    }
-
     pub fn is_falling_block_out_of_bounds(&self) -> bool {
-        self.block.is_out_of_bounds(self.falling_block.x,
-                                    self.falling_block.y,
-                                    self.block_template.block(&self.falling_block.template))
+        if let Some(ref falling_block) = self.falling_block {
+            self.block.is_out_of_bounds(falling_block.x,
+                                        falling_block.y,
+                                        self.block_template.block(&falling_block.template))
+        } else {
+            true
+        }
     }
 
     pub fn lock_falling_block(&mut self) {
         assert!(!self.is_falling_block_out_of_bounds());
-        self.block.set_with_block(self.falling_block.x,
-                                  self.falling_block.y,
-                                  self.block_template.block(&self.falling_block.template));
-        self.falling_block = FallingBlock::none();
-        self.can_hold_falling_block = true;
+        let falling_block = self.falling_block.take();
+        if let Some(falling_block) = falling_block {
+            self.block.set_with_block(falling_block.x,
+                                      falling_block.y,
+                                      self.block_template.block(&falling_block.template));
+            self.can_hold_falling_block = true;
+            self.max_lock_delay.reset();
+        }
     }
 
     pub fn has_lines_to_break(&mut self) -> bool {
@@ -1125,41 +1144,48 @@ impl Playfield {
 
     pub fn render_falling_block(&self, renderer: &mut SoftwareRenderer, x: i32, y: i32, blocks_bitmap: &Bitmap) {
         let x = self.x_offset_for_cells(x);
-        let block = self.block_template.block(&self.falling_block.template);
+        if let Some(ref falling_block) = self.falling_block {
+            let block = self.block_template.block(&falling_block.template);
 
-        for (col, row, cell) in block_iter!(block) {
-            // Simply clip the block
-            if self.falling_block.y + (row as i32) < self.block.height as i32 {
-                let x_offset = (self.falling_block.x + col as i32) * self.block_size_in_pixels;
-                let y_offset = (self.falling_block.y + row as i32) * self.block_size_in_pixels;
-                let x = x + x_offset;
-                let y = y + y_offset;
-                renderer.blit_sub_bitmap(x + 1, y + 1,
-                                         self.block_size_in_pixels * cell.index,
-                                         0,
-                                         self.block_size_in_pixels,
-                                         self.block_size_in_pixels, blocks_bitmap);
+            for (col, row, cell) in block_iter!(block) {
+                // Simply clip the block
+                if falling_block.y + (row as i32) < self.block.height as i32 {
+                    let x_offset = (falling_block.x + col as i32) * self.block_size_in_pixels;
+                    let y_offset = (falling_block.y + row as i32) * self.block_size_in_pixels;
+                    let x = x + x_offset;
+                    let y = y + y_offset;
+                    renderer.blit_sub_bitmap(x + 1, y + 1,
+                                             self.block_size_in_pixels * cell.index,
+                                             0,
+                                             self.block_size_in_pixels,
+                                             self.block_size_in_pixels, blocks_bitmap);
+                }
             }
         }
     }
 
     pub fn render_ghost_block(&self, renderer: &mut SoftwareRenderer, x: i32, y: i32) {
         let x = self.x_offset_for_cells(x);
-        let block = self.block_template.block(&self.falling_block.template);
-        let (ghost_x, ghost_y) = self.get_ghost_block_pos();
+        if let Some(ref falling_block) = self.falling_block {
+            let block = self.block_template.block(&falling_block.template);
+            let (ghost_x, ghost_y) = self.block
+                                         .get_ghost_block_pos(falling_block.x,
+                                                              falling_block.y,
+                                                              self.block_template.block(&falling_block.template));
 
-        for (col, row, cell) in block_iter!(block) {
-            // Simply clip the block
-            if ghost_y + (row as i32) < self.block.height as i32 {
-                let x_offset = (ghost_x + col as i32) * self.block_size_in_pixels;
-                let y_offset = (ghost_y + row as i32) * self.block_size_in_pixels;
-                let x = x + x_offset;
-                let y = y + y_offset;
-                renderer.rect(x + 1,
-                              y + 1,
-                              x + self.block_size_in_pixels - 1,
-                              y + self.block_size_in_pixels - 1,
-                              cell.color);
+            for (col, row, cell) in block_iter!(block) {
+                // Simply clip the block
+                if ghost_y + (row as i32) < self.block.height as i32 {
+                    let x_offset = (ghost_x + col as i32) * self.block_size_in_pixels;
+                    let y_offset = (ghost_y + row as i32) * self.block_size_in_pixels;
+                    let x = x + x_offset;
+                    let y = y + y_offset;
+                    renderer.rect(x + 1,
+                                  y + 1,
+                                  x + self.block_size_in_pixels - 1,
+                                  y + self.block_size_in_pixels - 1,
+                                  cell.color);
+                }
             }
         }
     }
@@ -1212,7 +1238,7 @@ impl Playfield {
 
     fn render_next_blocks(&self, renderer: &mut SoftwareRenderer, x: i32, y: i32, blocks_bitmap: &Bitmap) {
         let x = self.x_offset_for_next_blocks(x);
-        for (i, template) in self.next_templates.iter().enumerate() {
+        for (i, template) in self.generator.next_templates().iter().enumerate() {
             let block = self.block_template.block(template);
 
             for (col, row, cell) in block_iter!(block) {

@@ -1,28 +1,26 @@
-pub type Trans<C, G> = Option<TransRaw<C, G>>;
-
-pub enum TransRaw<C, G> {
+pub enum Trans<C, G> {
     Switch(Box<State<Context=C, Game=G>>),
     Push(Box<State<Context=C, Game=G>>),
     Pop,
 }
 
-pub fn switch<C, G, S: State<Context=C, Game=G> + 'static>(state: S) -> Trans<C, G> {
-    Some(TransRaw::Switch(Box::new(state)))
+pub fn switch<C, G, S: State<Context=C, Game=G> + 'static>(state: S) -> Option<Trans<C, G>> {
+    Some(Trans::Switch(Box::new(state)))
 }
 
-pub fn push<C, G, S: State<Context=C, Game=G> + 'static>(state: S) -> Trans<C, G> {
-    Some(TransRaw::Push(Box::new(state)))
+pub fn push<C, G, S: State<Context=C, Game=G> + 'static>(state: S) -> Option<Trans<C, G>> {
+    Some(Trans::Push(Box::new(state)))
 }
 
-pub fn pop<C, G>() -> Trans<C, G> {
-    Some(TransRaw::Pop)
+pub fn pop<C, G>() -> Option<Trans<C, G>> {
+    Some(Trans::Pop)
 }
 
 pub trait State {
     type Context;
     type Game;
 
-    fn update(&mut self, _ctx: &mut Self::Context, _game: &mut Self::Game) -> Trans<Self::Context, Self::Game> {
+    fn update(&mut self, _ctx: &mut Self::Context, _game: &mut Self::Game) -> Option<Trans<Self::Context, Self::Game>> {
         None
     }
 }
@@ -54,11 +52,11 @@ impl<C, G> StateMachine<C, G> {
         }
     }
 
-    fn trans(&mut self, trans: TransRaw<C, G>) {
+    fn trans(&mut self, trans: Trans<C, G>) {
         match trans {
-            TransRaw::Switch(state) => self.switch(state),
-            TransRaw::Push(state) => self.push(state),
-            TransRaw::Pop => self.pop(),
+            Trans::Switch(state) => self.switch(state),
+            Trans::Push(state) => self.push(state),
+            Trans::Pop => self.pop(),
         }
     }
 
