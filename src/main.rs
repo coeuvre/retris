@@ -134,6 +134,8 @@ impl State for Spawn {
         let ref mut renderer = ctx.renderer;
         let ref mut playfield = game.playfield;
 
+        assert!(playfield.falling_block.is_none());
+
         self.spawn_delay.tick(dt);
         if self.spawn_delay.is_expired() {
             playfield.spawn_falling_block();
@@ -281,6 +283,7 @@ impl State for Locking {
         let ref mut renderer = ctx.renderer;
         let ref mut playfield = game.playfield;
 
+        assert!(playfield.falling_block.is_some());
         assert!(!playfield.can_move_falling_block_by(0, -1));
 
         if self.is_immediately {
@@ -313,12 +316,14 @@ impl State for Locking {
 
 pub struct Breaking {
     breaking_line_delay: Timer,
+    blink_delay: Timer,
 }
 
 impl Breaking {
     pub fn new() -> Breaking {
         Breaking {
             breaking_line_delay: Timer::new(0.25),
+            blink_delay: Timer::new(0.08),
         }
     }
 }
@@ -332,13 +337,19 @@ impl State for Breaking {
         let ref mut renderer = ctx.renderer;
         let ref mut playfield = game.playfield;
 
+        assert!(playfield.falling_block.is_none());
         assert!(playfield.has_lines_to_break());
 
         self.breaking_line_delay.tick(dt);
         if self.breaking_line_delay.is_expired() {
-            playfield.block.break_lines();
-            playfield.breaking_lines.clear();
+            playfield.break_lines();
             return switch(Spawn::new());
+        }
+
+        self.blink_delay.tick(dt);
+        if self.blink_delay.is_expired() {
+            self.blink_delay.reset();
+            playfield.blink_breaking_lines();
         }
 
         playfield.render(renderer, 32, 32, &game.blocks);
@@ -984,7 +995,7 @@ pub struct Playfield {
     max_lock_delay: Timer,
 
     breaking_lines: Vec<usize>,
-    is_blink: bool,
+    is_breaking_lines_visible: bool,
 
     block_size_in_pixels: i32,
 }
@@ -1006,7 +1017,7 @@ impl Playfield {
             max_lock_delay: Timer::new(frames_to_seconds(60.0)),
 
             breaking_lines: vec![],
-            is_blink: false,
+            is_breaking_lines_visible: true,
 
             block_size_in_pixels: block_size_in_pixels,
         }
@@ -1116,6 +1127,16 @@ impl Playfield {
         self.breaking_lines.len() > 0
     }
 
+    pub fn blink_breaking_lines(&mut self) {
+        self.is_breaking_lines_visible = !self.is_breaking_lines_visible;
+    }
+
+    pub fn break_lines(&mut self) {
+        self.block.break_lines();
+        self.breaking_lines.clear();
+        self.is_breaking_lines_visible = true;
+    }
+
     fn width_in_pixels(&self) -> i32 {
         self.block.width as i32 * self.block_size_in_pixels
     }
@@ -1142,7 +1163,7 @@ impl Playfield {
         }
     }
 
-    pub fn render_falling_block(&self, renderer: &mut SoftwareRenderer, x: i32, y: i32, blocks_bitmap: &Bitmap) {
+    fn render_falling_block(&self, renderer: &mut SoftwareRenderer, x: i32, y: i32, blocks_bitmap: &Bitmap) {
         let x = self.x_offset_for_cells(x);
         if let Some(ref falling_block) = self.falling_block {
             let block = self.block_template.block(&falling_block.template);
@@ -1164,7 +1185,7 @@ impl Playfield {
         }
     }
 
-    pub fn render_ghost_block(&self, renderer: &mut SoftwareRenderer, x: i32, y: i32) {
+    fn render_ghost_block(&self, renderer: &mut SoftwareRenderer, x: i32, y: i32) {
         let x = self.x_offset_for_cells(x);
         if let Some(ref falling_block) = self.falling_block {
             let block = self.block_template.block(&falling_block.template);
@@ -1195,7 +1216,7 @@ impl Playfield {
         for (col, row, cell) in block_iter!(self.block) {
             let mut alpha = 1.0;
             if self.breaking_lines.contains(&row) {
-                if self.is_blink {
+                if !self.is_breaking_lines_visible {
                     continue;
                 }
 
