@@ -2,6 +2,8 @@ extern crate rand;
 extern crate sdl2;
 extern crate time;
 
+use std::collections::VecDeque;
+
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 
@@ -38,10 +40,48 @@ impl Retris {
     }
 }
 
+pub struct EventQueue {
+    events: VecDeque<Event>,
+}
+
+impl EventQueue {
+    pub fn new() -> EventQueue {
+        EventQueue {
+            events: VecDeque::new(),
+        }
+    }
+
+    pub fn poll(&mut self) -> EventQueuePollIter {
+        EventQueuePollIter {
+            queue: self,
+        }
+    }
+
+    pub fn push(&mut self, event: Event) {
+        self.events.push_back(event);
+    }
+
+    pub fn clear(&mut self) {
+        self.events.clear();
+    }
+}
+
+pub struct EventQueuePollIter<'a> {
+    queue: &'a mut EventQueue,
+}
+
+impl<'a> Iterator for EventQueuePollIter<'a> {
+    type Item = Event;
+
+    fn next(&mut self) -> Option<Event> {
+        self.queue.events.pop_front()
+    }
+}
+
 pub struct Context {
     pub dt: f32,
     pub renderer: SoftwareRenderer,
-    pub events: Vec<Event>,
+    pub events: EventQueue,
 }
 
 pub struct Prepare {
@@ -66,39 +106,37 @@ impl State for Prepare {
         println!("coutndown: {:.2}", self.countdown.elapsed());
 
         if self.countdown.is_expired() {
-            return Trans::switch(Falling::new());
+            return switch(Falling::new());
         }
 
-        Trans::none()
+        None
     }
 }
 
-fn handle_common_event(event: &Event, playfield: &mut Playfield) -> Trans<Context, Retris> {
-    let mut trans = Trans::none();
-
+fn handle_common_event(event: Event, playfield: &mut Playfield) -> Trans<Context, Retris> {
     match event {
-        &Event::KeyDown {keycode: Some(Keycode::P), ..} => {
-            trans = Trans::push(Paused);
+        Event::KeyDown {keycode: Some(Keycode::P), ..} => {
+            return push(Paused);
         }
-        &Event::KeyDown {keycode: Some(Keycode::Up), ..} => {
+        Event::KeyDown {keycode: Some(Keycode::Up), ..} => {
             playfield.rotate_falling_block(1);
         }
-        &Event::KeyDown {keycode: Some(Keycode::Z), ..} => {
+        Event::KeyDown {keycode: Some(Keycode::Z), ..} => {
             playfield.rotate_falling_block(-1);
         }
-        &Event::KeyDown {keycode: Some(Keycode::Left), ..} => {
+        Event::KeyDown {keycode: Some(Keycode::Left), ..} => {
             playfield.move_falling_block_by(-1, 0);
         }
-        &Event::KeyDown {keycode: Some(Keycode::Right), ..} => {
+        Event::KeyDown {keycode: Some(Keycode::Right), ..} => {
             playfield.move_falling_block_by(1, 0);
         }
-        &Event::KeyDown {keycode: Some(Keycode::C), ..} => {
+        Event::KeyDown {keycode: Some(Keycode::C), ..} => {
             playfield.hold_falling_block();
         }
         _ => {}
     }
 
-    trans
+    None
 }
 
 pub struct Falling {
@@ -118,51 +156,44 @@ impl State for Falling {
     type Game = Retris;
 
     fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<Context, Retris> {
-        let mut trans = Trans::none();
         let dt = ctx.dt;
         let ref mut renderer = ctx.renderer;
         let ref mut playfield = game.playfield;
 
         assert!(playfield.can_move_falling_block_by(0, -1));
 
-        for event in &ctx.events {
+        for event in ctx.events.poll() {
             match event {
-                &Event::KeyDown {keycode: Some(Keycode::Down), ..} => {
+                Event::KeyDown {keycode: Some(Keycode::Down), ..} => {
                     playfield.move_falling_block_by(0, -1);
                     self.gravity_delay.reset();
                 }
-                &Event::KeyDown {keycode: Some(Keycode::Space), ..} => {
+                Event::KeyDown {keycode: Some(Keycode::Space), ..} => {
                     playfield.drop_falling_block();
-                    trans = Trans::switch(Locking::immediately());
+                    return switch(Locking::immediately());
                 }
                 _ => {
-                    trans = handle_common_event(event, playfield);
+                    let trans = handle_common_event(event, playfield);
+                    if !trans.is_none() {
+                        return trans;
+                    }
                 }
             }
-
-            if !trans.is_none() {
-                break;
-            }
         }
 
-        // NOTE(coeuvre): Only apply gravity when we still in the Falling state
-        if trans.is_none() {
-            self.gravity_delay.tick(dt);
-            if self.gravity_delay.is_expired() {
-                playfield.move_falling_block_by(0, -1);
-                self.gravity_delay.reset();
-            }
-
-            if !playfield.can_move_falling_block_by(0, -1) {
-                trans = Trans::switch(Locking::new());
-            }
+        self.gravity_delay.tick(dt);
+        if self.gravity_delay.is_expired() {
+            playfield.move_falling_block_by(0, -1);
+            self.gravity_delay.reset();
         }
 
-        playfield.render_ghost_block(renderer, 32, 32);
-        playfield.render_falling_block(renderer, 32, 32, &game.blocks);
+        if !playfield.can_move_falling_block_by(0, -1) {
+            return switch(Locking::new());
+        }
+
         playfield.render(renderer, 32, 32, &game.blocks);
 
-        trans
+        None
     }
 }
 
@@ -188,17 +219,16 @@ impl Locking {
 
     fn lock(&mut self, playfield: &mut Playfield) -> Trans<Context, Retris> {
         if playfield.is_falling_block_out_of_bounds() {
-            // NOTE(coeuvre): We lost here, partial lock out
-            Trans::switch(Lost)
+            // NOTE(coeuvre): Partial lock out
+            switch(Lost)
         } else {
             playfield.lock_falling_block();
 
             if playfield.has_lines_to_break() {
-                Trans::switch(Breaking::new())
+                switch(Breaking::new())
             } else {
                 playfield.spawn_falling_block();
-                playfield.can_hold_falling_block = true;
-                Trans::switch(Falling::new())
+                switch(Falling::new())
             }
 
         }
@@ -210,7 +240,6 @@ impl State for Locking {
     type Game = Retris;
 
     fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<Context, Retris> {
-        let mut trans = Trans::none();
         let dt = ctx.dt;
         let ref mut renderer = ctx.renderer;
         let ref mut playfield = game.playfield;
@@ -218,35 +247,30 @@ impl State for Locking {
         assert!(!playfield.can_move_falling_block_by(0, -1));
 
         if self.is_immediately {
-            trans = self.lock(playfield);
-        } else {
-            for event in &ctx.events {
-                trans = handle_common_event(event, playfield);
+            return self.lock(playfield);
+        }
 
-                if !trans.is_none() {
-                    break;
-                }
+        for event in ctx.events.poll() {
+            let trans = handle_common_event(event, playfield);
+            if !trans.is_none() {
+                return trans
             }
+        }
 
-            if trans.is_none() {
-                if playfield.can_move_falling_block_by(0, -1) {
-                    trans = Trans::switch(Falling::new());
-                } else {
-                    self.lock_delay.tick(dt);
-                    playfield.max_lock_delay.tick(dt);
+        if playfield.can_move_falling_block_by(0, -1) {
+            return switch(Falling::new());
+        } else {
+            self.lock_delay.tick(dt);
+            playfield.max_lock_delay.tick(dt);
 
-                    if self.lock_delay.is_expired() || playfield.max_lock_delay.is_expired() {
-                        trans = self.lock(playfield);
-                    }
-                }
-
-                playfield.render_falling_block(renderer, 32, 32, &game.blocks);
+            if self.lock_delay.is_expired() || playfield.max_lock_delay.is_expired() {
+                return self.lock(playfield);
             }
         }
 
         playfield.render(renderer, 32, 32, &game.blocks);
 
-        trans
+        None
     }
 }
 
@@ -267,7 +291,6 @@ impl State for Breaking {
     type Game = Retris;
 
     fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<Context, Retris> {
-        let mut trans = Trans::none();
         let dt = ctx.dt;
         let ref mut renderer = ctx.renderer;
         let ref mut playfield = game.playfield;
@@ -280,12 +303,12 @@ impl State for Breaking {
             playfield.spawn_falling_block();
             playfield.can_hold_falling_block = true;
             playfield.breaking_lines.clear();
-            trans = Trans::switch(Falling::new());
+            return switch(Falling::new());
         }
 
         playfield.render(renderer, 32, 32, &game.blocks);
 
-        trans
+        None
     }
 }
 
@@ -296,26 +319,21 @@ impl State for Paused {
     type Game = Retris;
 
     fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<Context, Retris> {
-        let mut trans = Trans::none();
         let ref mut renderer = ctx.renderer;
         let ref mut playfield = game.playfield;
 
-        for event in &ctx.events {
+        for event in ctx.events.poll() {
             match event {
-                &Event::KeyDown {keycode: Some(Keycode::P), ..} => {
-                    trans = Trans::pop();
-                    break;
+                Event::KeyDown {keycode: Some(Keycode::P), ..} => {
+                    return pop();
                 }
                 _ => {}
             }
         }
 
-        // TODO(coeuvre): Correctly render those things
-        playfield.render_ghost_block(renderer, 32, 32);
-        playfield.render_falling_block(renderer, 32, 32, &game.blocks);
         playfield.render(renderer, 32, 32, &game.blocks);
 
-        trans
+        None
     }
 }
 
@@ -329,10 +347,9 @@ impl State for Lost {
         let ref mut renderer = ctx.renderer;
         let ref mut playfield = game.playfield;
 
-        playfield.render_falling_block(renderer, 32, 32, &game.blocks);
         playfield.render(renderer, 32, 32, &game.blocks);
 
-        Trans::none()
+        None
     }
 }
 
@@ -814,6 +831,10 @@ impl BlockTemplateRef {
         }
     }
 
+    pub fn is_none(&self) -> bool {
+        self.shape == 0 && self.order == 0 && self.order_max == 0
+    }
+
     pub fn rrotate(&mut self) {
         self.order = (self.order + 1) % self.order_max;
     }
@@ -849,6 +870,10 @@ impl FallingBlock {
             x: x,
             y: y,
         }
+    }
+
+    pub fn is_none(&self) -> bool {
+        self.template.is_none() && self.x == 0 && self.y == 0
     }
 
     pub fn move_to(&mut self, x: i32, y: i32) {
@@ -971,6 +996,7 @@ impl Playfield {
                                          self.falling_block.y,
                                          self.block_template.block(&self.falling_block.template)) {
             // TODO(coeuvre): Block out, we lost here
+            unreachable!();
         }
     }
 
@@ -1028,10 +1054,14 @@ impl Playfield {
     }
 
     pub fn can_move_falling_block_by(&self, dx: i32, dy: i32) -> bool {
-        self.block.is_valid_position(self.falling_block.x + dx,
-                                     self.falling_block.y + dy,
-                                     &self.block_template
-                                          .block(&self.falling_block.template))
+        if self.falling_block.is_none() {
+            false
+        } else {
+            self.block.is_valid_position(self.falling_block.x + dx,
+                                         self.falling_block.y + dy,
+                                         &self.block_template
+                                              .block(&self.falling_block.template))
+        }
     }
 
     pub fn move_falling_block_by(&mut self, dx: i32, dy: i32) {
@@ -1057,7 +1087,9 @@ impl Playfield {
         assert!(!self.is_falling_block_out_of_bounds());
         self.block.set_with_block(self.falling_block.x,
                                   self.falling_block.y,
-                                  self.block_template.block(&self.falling_block.template))
+                                  self.block_template.block(&self.falling_block.template));
+        self.falling_block = FallingBlock::none();
+        self.can_hold_falling_block = true;
     }
 
     pub fn has_lines_to_break(&mut self) -> bool {
@@ -1208,6 +1240,10 @@ impl Playfield {
 
     pub fn render(&self, renderer: &mut SoftwareRenderer, x: i32, y: i32, blocks_bitmap: &Bitmap) {
         self.render_held_blocks(renderer, x, y, blocks_bitmap);
+        if !self.falling_block.is_none() {
+            self.render_ghost_block(renderer, x, y);
+            self.render_falling_block(renderer, x, y, blocks_bitmap);
+        }
         self.render_cells(renderer, x, y, blocks_bitmap);
         self.render_grids(renderer, x, y, rgba(0.2, 0.2, 0.2, 1.0));
         self.render_borders(renderer, x, y, rgba(1.0, 1.0, 1.0, 1.0));
@@ -1233,7 +1269,7 @@ fn main() {
     let mut context = Context {
         dt: 0.0,
         renderer: SoftwareRenderer::new(renderer, width, height),
-        events: vec![],
+        events: EventQueue::new(),
     };
 
     let mut retris = Retris::new();

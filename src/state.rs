@@ -1,41 +1,29 @@
-pub trait State {
-    type Context;
-    type Game;
+pub type Trans<C, G> = Option<TransRaw<C, G>>;
 
-    fn update(&mut self, _ctx: &mut Self::Context, _game: &mut Self::Game) -> Trans<Self::Context, Self::Game> {
-        Trans::none()
-    }
-}
-
-pub enum Trans<C, G> {
-    None,
+pub enum TransRaw<C, G> {
     Switch(Box<State<Context=C, Game=G>>),
     Push(Box<State<Context=C, Game=G>>),
     Pop,
 }
 
-impl<C, G> Trans<C, G> {
-    pub fn none() -> Trans<C, G> {
-        Trans::None
-    }
+pub fn switch<C, G, S: State<Context=C, Game=G> + 'static>(state: S) -> Trans<C, G> {
+    Some(TransRaw::Switch(Box::new(state)))
+}
 
-    pub fn switch<S: State<Context=C, Game=G> + 'static>(state: S) -> Trans<C, G> {
-        Trans::Switch(Box::new(state))
-    }
+pub fn push<C, G, S: State<Context=C, Game=G> + 'static>(state: S) -> Trans<C, G> {
+    Some(TransRaw::Push(Box::new(state)))
+}
 
-    pub fn push<S: State<Context=C, Game=G> + 'static>(state: S) -> Trans<C, G> {
-        Trans::Push(Box::new(state))
-    }
+pub fn pop<C, G>() -> Trans<C, G> {
+    Some(TransRaw::Pop)
+}
 
-    pub fn pop() -> Trans<C, G> {
-        Trans::Pop
-    }
+pub trait State {
+    type Context;
+    type Game;
 
-    pub fn is_none(&self) -> bool {
-        match self {
-            &Trans::None => true,
-            _ => false,
-        }
+    fn update(&mut self, _ctx: &mut Self::Context, _game: &mut Self::Game) -> Trans<Self::Context, Self::Game> {
+        None
     }
 }
 
@@ -52,8 +40,9 @@ impl<C, G> StateMachine<C, G> {
     }
 
     pub fn update(&mut self, ctx: &mut C, game: &mut G) {
-        let trans = self.current_mut().update(ctx, game);
-        self.trans(trans);
+        while let Some(trans) = self.current_mut().update(ctx, game) {
+            self.trans(trans);
+        }
     }
 
     fn current_mut(&mut self) -> &mut State<Context=C, Game=G> {
@@ -65,12 +54,11 @@ impl<C, G> StateMachine<C, G> {
         }
     }
 
-    fn trans(&mut self, trans: Trans<C, G>) {
+    fn trans(&mut self, trans: TransRaw<C, G>) {
         match trans {
-            Trans::Switch(state) => self.switch(state),
-            Trans::Push(state) => self.push(state),
-            Trans::Pop => self.pop(),
-            Trans::None => (),
+            TransRaw::Switch(state) => self.switch(state),
+            TransRaw::Push(state) => self.push(state),
+            TransRaw::Pop => self.pop(),
         }
     }
 
