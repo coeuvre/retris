@@ -1,71 +1,64 @@
-pub enum Trans<C, G> {
-    Switch(Box<State<Context=C, Game=G>>),
-    Push(Box<State<Context=C, Game=G>>),
+pub enum Trans<S: State> {
+    /// Keep current state and go to next frame
+    Next,
+    Switch(S),
+    Push(S),
     Pop,
 }
 
-pub fn switch<C, G, S: State<Context=C, Game=G> + 'static>(state: S) -> Option<Trans<C, G>> {
-    Some(Trans::Switch(Box::new(state)))
+pub fn next<S: State>() -> Trans<S> {
+    Trans::Next
 }
 
-pub fn push<C, G, S: State<Context=C, Game=G> + 'static>(state: S) -> Option<Trans<C, G>> {
-    Some(Trans::Push(Box::new(state)))
+pub fn switch<S: State>(state: S) -> Trans<S> {
+    Trans::Switch(state)
 }
 
-pub fn pop<C, G>() -> Option<Trans<C, G>> {
-    Some(Trans::Pop)
+pub fn push<S: State>(state: S) -> Trans<S> {
+    Trans::Push(state)
 }
 
-pub trait State {
+pub fn pop<S: State>() -> Trans<S> {
+    Trans::Pop
+}
+
+pub trait State: Sized {
     type Context;
     type Game;
 
-    fn update(&mut self, _ctx: &mut Self::Context, _game: &mut Self::Game) -> Option<Trans<Self::Context, Self::Game>> {
-        None
-    }
+    fn update(&mut self, _ctx: &mut Self::Context, _game: &mut Self::Game) -> Trans<Self> { next() }
 }
 
-pub struct StateMachine<C, G> {
-    stack: Vec<Box<State<Context=C, Game=G>>>,
+pub struct StateMachine<S> {
+    stack: Vec<S>,
 }
 
-impl<C, G> StateMachine<C, G> {
-    pub fn new<S: State<Context=C, Game=G> + 'static>(state: S) -> StateMachine<C, G> {
-        let stack: Vec<Box<State<Context=C, Game=G>>> = vec![Box::new(state)];
+impl<S: State> StateMachine<S> {
+    pub fn new(state: S) -> StateMachine<S> {
         StateMachine {
-            stack: stack,
+            stack: vec![state],
         }
     }
 
-    pub fn update(&mut self, ctx: &mut C, game: &mut G) {
-        while let Some(trans) = self.current_mut().update(ctx, game) {
-            self.trans(trans);
+    pub fn update<C, G>(&mut self, ctx: &mut C, game: &mut G) where S: State<Context=C, Game=G> {
+        assert!(self.stack.len() > 0);
+
+        loop {
+            match self.stack.last_mut().unwrap().update(ctx, game) {
+                Trans::Next => break,
+                Trans::Switch(state) => self.switch(state),
+                Trans::Push(state) => self.push(state),
+                Trans::Pop => self.pop(),
+            }
         }
     }
 
-    fn current_mut(&mut self) -> &mut State<Context=C, Game=G> {
-        if let Some(state) = self.stack.last_mut() {
-            &mut **state
-        } else {
-            // NOTE(coeuvre): There must be at least one state!
-            unreachable!();
-        }
-    }
-
-    fn trans(&mut self, trans: Trans<C, G>) {
-        match trans {
-            Trans::Switch(state) => self.switch(state),
-            Trans::Push(state) => self.push(state),
-            Trans::Pop => self.pop(),
-        }
-    }
-
-    fn switch(&mut self, state: Box<State<Context=C, Game=G>>) {
+    fn switch(&mut self, state: S) {
         self.stack.pop();
         self.stack.push(state);
     }
 
-    fn push(&mut self, state: Box<State<Context=C, Game=G>>) {
+    fn push(&mut self, state: S) {
         self.stack.push(state);
     }
 

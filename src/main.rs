@@ -94,22 +94,17 @@ impl Prepare {
             countdown: Timer::new(0.0),
         }
     }
-}
 
-impl State for Prepare {
-    type Context = Context;
-    type Game = Retris;
-
-    fn update(&mut self, ctx: &mut Context, _game: &mut Retris) -> Option<Trans<Context, Retris>> {
+    pub fn update(&mut self, ctx: &mut Context, _game: &mut Retris) -> Trans<PlayfieldState> {
         self.countdown.tick(ctx.dt);
 
         println!("coutndown: {:.2}", self.countdown.elapsed());
 
         if self.countdown.is_expired() {
-            return switch(Spawn::new());
+            return switch(PlayfieldState::Spawn(Spawn::new()));
         }
 
-        None
+        next()
     }
 }
 
@@ -123,13 +118,8 @@ impl Spawn {
             spawn_delay: Timer::new(0.0),
         }
     }
-}
 
-impl State for Spawn {
-    type Context = Context;
-    type Game = Retris;
-
-    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Option<Trans<Context, Retris>> {
+    pub fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<PlayfieldState> {
         let dt = ctx.dt;
         let ref mut renderer = ctx.renderer;
         let ref mut playfield = game.playfield;
@@ -141,43 +131,17 @@ impl State for Spawn {
             playfield.spawn_falling_block();
 
             if playfield.can_move_falling_block_by(0, 0) {
-                return switch(Falling::new());
+                return switch(PlayfieldState::Falling(Falling::new()));
             } else {
                 // NOTE(coeuvre): Block out
-                return switch(Lost);
+                return switch(PlayfieldState::Lost);
             }
         }
 
         playfield.render(renderer, 32, 32, &game.blocks);
 
-        None
+        next()
     }
-}
-
-fn handle_common_event(event: Event, playfield: &mut Playfield) -> Option<Trans<Context, Retris>> {
-    match event {
-        Event::KeyDown {keycode: Some(Keycode::P), ..} => {
-            return push(Paused);
-        }
-        Event::KeyDown {keycode: Some(Keycode::Up), ..} => {
-            playfield.rotate_falling_block(1);
-        }
-        Event::KeyDown {keycode: Some(Keycode::Z), ..} => {
-            playfield.rotate_falling_block(-1);
-        }
-        Event::KeyDown {keycode: Some(Keycode::Left), ..} => {
-            playfield.move_falling_block_by(-1, 0);
-        }
-        Event::KeyDown {keycode: Some(Keycode::Right), ..} => {
-            playfield.move_falling_block_by(1, 0);
-        }
-        Event::KeyDown {keycode: Some(Keycode::C), ..} => {
-            playfield.hold_falling_block();
-        }
-        _ => {}
-    }
-
-    None
 }
 
 pub struct Falling {
@@ -190,13 +154,8 @@ impl Falling {
             gravity_delay: Timer::new(gravity_to_delay(0.015625)),
         }
     }
-}
 
-impl State for Falling {
-    type Context = Context;
-    type Game = Retris;
-
-    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Option<Trans<Context, Retris>> {
+    pub fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<PlayfieldState> {
         let dt = ctx.dt;
         let ref mut renderer = ctx.renderer;
         let ref mut playfield = game.playfield;
@@ -211,11 +170,10 @@ impl State for Falling {
                 }
                 Event::KeyDown {keycode: Some(Keycode::Space), ..} => {
                     playfield.drop_falling_block();
-                    return switch(Locking::immediately());
+                    return switch(PlayfieldState::Locking(Locking::immediately()));
                 }
                 _ => {
-                    let trans = handle_common_event(event, playfield);
-                    if trans.is_some() {
+                    if let Some(trans) = PlayfieldState::handle_common_event(event, playfield) {
                         return trans;
                     }
                 }
@@ -229,12 +187,12 @@ impl State for Falling {
         }
 
         if !playfield.can_move_falling_block_by(0, -1) {
-            return switch(Locking::new());
+            return switch(PlayfieldState::Locking(Locking::new()));
         }
 
         playfield.render(renderer, 32, 32, &game.blocks);
 
-        None
+        next()
     }
 }
 
@@ -258,27 +216,22 @@ impl Locking {
         }
     }
 
-    fn lock(&mut self, playfield: &mut Playfield) -> Option<Trans<Context, Retris>> {
+    fn lock(&mut self, playfield: &mut Playfield) -> Trans<PlayfieldState> {
         if playfield.is_falling_block_out_of_bounds() {
             // NOTE(coeuvre): Partial lock out
-            switch(Lost)
+            switch(PlayfieldState::Lost)
         } else {
             playfield.lock_falling_block();
 
             if playfield.has_lines_to_break() {
-                switch(Breaking::new())
+                switch(PlayfieldState::Breaking(Breaking::new()))
             } else {
-                switch(Spawn::new())
+                switch(PlayfieldState::Spawn(Spawn::new()))
             }
         }
     }
-}
 
-impl State for Locking {
-    type Context = Context;
-    type Game = Retris;
-
-    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Option<Trans<Context, Retris>> {
+    pub fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<PlayfieldState> {
         let dt = ctx.dt;
         let ref mut renderer = ctx.renderer;
         let ref mut playfield = game.playfield;
@@ -291,14 +244,13 @@ impl State for Locking {
         }
 
         for event in ctx.events.poll() {
-            let trans = handle_common_event(event, playfield);
-            if trans.is_some() {
+            if let Some(trans) = PlayfieldState::handle_common_event(event, playfield) {
                 return trans;
             }
         }
 
         if playfield.can_move_falling_block_by(0, -1) {
-            return switch(Falling::new());
+            return switch(PlayfieldState::Falling(Falling::new()));
         } else {
             self.lock_delay.tick(dt);
             playfield.max_lock_delay.tick(dt);
@@ -310,7 +262,7 @@ impl State for Locking {
 
         playfield.render(renderer, 32, 32, &game.blocks);
 
-        None
+        next()
     }
 }
 
@@ -326,13 +278,8 @@ impl Breaking {
             blink_delay: Timer::new(0.08),
         }
     }
-}
 
-impl State for Breaking {
-    type Context = Context;
-    type Game = Retris;
-
-    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Option<Trans<Context, Retris>> {
+    pub fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<PlayfieldState> {
         let dt = ctx.dt;
         let ref mut renderer = ctx.renderer;
         let ref mut playfield = game.playfield;
@@ -343,7 +290,7 @@ impl State for Breaking {
         self.breaking_line_delay.tick(dt);
         if self.breaking_line_delay.is_expired() {
             playfield.break_lines();
-            return switch(Spawn::new());
+            return switch(PlayfieldState::Spawn(Spawn::new()));
         }
 
         self.blink_delay.tick(dt);
@@ -354,48 +301,93 @@ impl State for Breaking {
 
         playfield.render(renderer, 32, 32, &game.blocks);
 
-        None
+        next()
     }
 }
 
-pub struct Paused;
+pub enum PlayfieldState {
+    Prepare(Prepare),
+    Spawn(Spawn),
+    Falling(Falling),
+    Locking(Locking),
+    Breaking(Breaking),
+    Paused,
+    Lost,
+}
 
-impl State for Paused {
-    type Context = Context;
-    type Game = Retris;
-
-    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Option<Trans<Context, Retris>> {
-        let ref mut renderer = ctx.renderer;
-        let ref mut playfield = game.playfield;
-
-        for event in ctx.events.poll() {
-            match event {
-                Event::KeyDown {keycode: Some(Keycode::P), ..} => {
-                    return pop();
-                }
-                _ => {}
+impl PlayfieldState {
+    fn handle_common_event(event: Event, playfield: &mut Playfield) -> Option<Trans<PlayfieldState>> {
+        match event {
+            Event::KeyDown {keycode: Some(Keycode::P), ..} => {
+                return Some(push(PlayfieldState::Paused));
             }
+            Event::KeyDown {keycode: Some(Keycode::Up), ..} => {
+                playfield.rotate_falling_block(1);
+            }
+            Event::KeyDown {keycode: Some(Keycode::Z), ..} => {
+                playfield.rotate_falling_block(-1);
+            }
+            Event::KeyDown {keycode: Some(Keycode::Left), ..} => {
+                playfield.move_falling_block_by(-1, 0);
+            }
+            Event::KeyDown {keycode: Some(Keycode::Right), ..} => {
+                playfield.move_falling_block_by(1, 0);
+            }
+            Event::KeyDown {keycode: Some(Keycode::C), ..} => {
+                playfield.hold_falling_block();
+            }
+            _ => {}
         }
 
-        playfield.render(renderer, 32, 32, &game.blocks);
-
         None
     }
 }
 
-pub struct Lost;
-
-impl State for Lost {
+impl State for PlayfieldState {
     type Context = Context;
     type Game = Retris;
 
-    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Option<Trans<Context, Retris>> {
-        let ref mut renderer = ctx.renderer;
-        let ref mut playfield = game.playfield;
+    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<PlayfieldState> {
+        match *self {
+            PlayfieldState::Prepare(ref mut prepare) => {
+                prepare.update(ctx, game)
+            }
+            PlayfieldState::Spawn(ref mut spawn) => {
+                spawn.update(ctx, game)
+            }
+            PlayfieldState::Falling(ref mut falling) => {
+                falling.update(ctx, game)
+            }
+            PlayfieldState::Locking(ref mut locking) => {
+                locking.update(ctx, game)
+            }
+            PlayfieldState::Breaking(ref mut breaking) => {
+                breaking.update(ctx, game)
+            }
+            PlayfieldState::Paused => {
+                let ref mut renderer = ctx.renderer;
+                let ref mut playfield = game.playfield;
 
-        playfield.render(renderer, 32, 32, &game.blocks);
+                for event in ctx.events.poll() {
+                    match event {
+                        Event::KeyDown {keycode: Some(Keycode::P), ..} => {
+                            return pop();
+                        }
+                        _ => {}
+                    }
+                }
 
-        None
+                playfield.render(renderer, 32, 32, &game.blocks);
+
+                next()
+            }
+            PlayfieldState::Lost => {
+                let ref mut renderer = ctx.renderer;
+                let ref mut playfield = game.playfield;
+                playfield.render(renderer, 32, 32, &game.blocks);
+                next()
+            }
+        }
     }
 }
 
@@ -1321,7 +1313,7 @@ fn main() {
 
     let mut retris = Retris::new();
 
-    let mut state_machine = StateMachine::new(Prepare::new());
+    let mut state_machine = StateMachine::new(PlayfieldState::Prepare(Prepare::new()));
 
     let mut event_pump = sdl2.event_pump().unwrap();
 
