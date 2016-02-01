@@ -1,21 +1,13 @@
 extern crate rand;
+extern crate hammer;
 extern crate sdl2;
-extern crate time;
 
 use std::collections::VecDeque;
 
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 
-use time::PreciseTime;
-
-use bitmap::*;
-use renderer::*;
-use state::*;
-
-pub mod bitmap;
-pub mod renderer;
-pub mod state;
+use hammer::prelude::*;
 
 const CYAN: i32 = 6;
 const YELLOW: i32 = 0;
@@ -40,50 +32,6 @@ impl Retris {
     }
 }
 
-pub struct EventQueue {
-    events: VecDeque<Event>,
-}
-
-impl EventQueue {
-    pub fn new() -> EventQueue {
-        EventQueue {
-            events: VecDeque::new(),
-        }
-    }
-
-    pub fn poll(&mut self) -> EventQueuePollIter {
-        EventQueuePollIter {
-            queue: self,
-        }
-    }
-
-    pub fn push(&mut self, event: Event) {
-        self.events.push_back(event);
-    }
-
-    pub fn clear(&mut self) {
-        self.events.clear();
-    }
-}
-
-pub struct EventQueuePollIter<'a> {
-    queue: &'a mut EventQueue,
-}
-
-impl<'a> Iterator for EventQueuePollIter<'a> {
-    type Item = Event;
-
-    fn next(&mut self) -> Option<Event> {
-        self.queue.events.pop_front()
-    }
-}
-
-pub struct Context {
-    pub dt: f32,
-    pub renderer: SoftwareRenderer,
-    pub events: EventQueue,
-}
-
 pub struct Prepare {
     countdown: Timer,
 }
@@ -95,8 +43,8 @@ impl Prepare {
         }
     }
 
-    pub fn update(&mut self, ctx: &mut Context, _game: &mut Retris) -> Trans<PlayfieldState> {
-        self.countdown.tick(ctx.dt);
+    pub fn update(&mut self, hammer: &mut Hammer, _context: &mut Retris) -> Trans<PlayfieldState> {
+        self.countdown.tick(hammer.dt);
 
         println!("coutndown: {:.2}", self.countdown.elapsed());
 
@@ -119,10 +67,10 @@ impl Spawn {
         }
     }
 
-    pub fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<PlayfieldState> {
-        let dt = ctx.dt;
-        let ref mut renderer = ctx.renderer;
-        let ref mut playfield = game.playfield;
+    pub fn update(&mut self, hammer: &mut Hammer, context: &mut Retris) -> Trans<PlayfieldState> {
+        let dt = hammer.dt;
+        let ref mut renderer = hammer.renderer;
+        let ref mut playfield = context.playfield;
 
         assert!(playfield.falling_block.is_none());
 
@@ -130,7 +78,7 @@ impl Spawn {
         if self.spawn_delay.is_expired() {
             playfield.spawn_falling_block();
 
-            if playfield.can_move_falling_block_by(0, 0) {
+            if playfield.can_move_falling_block_by(0, -1) {
                 return switch(PlayfieldState::Falling(Falling::new()));
             } else {
                 // NOTE(coeuvre): Block out
@@ -138,7 +86,7 @@ impl Spawn {
             }
         }
 
-        playfield.render(renderer, 32, 32, &game.blocks);
+        playfield.render(renderer, 32, 32, &context.blocks);
 
         next()
     }
@@ -155,14 +103,14 @@ impl Falling {
         }
     }
 
-    pub fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<PlayfieldState> {
-        let dt = ctx.dt;
-        let ref mut renderer = ctx.renderer;
-        let ref mut playfield = game.playfield;
+    pub fn update(&mut self, hammer: &mut Hammer, context: &mut Retris) -> Trans<PlayfieldState> {
+        let dt = hammer.dt;
+        let ref mut renderer = hammer.renderer;
+        let ref mut playfield = context.playfield;
 
         assert!(playfield.can_move_falling_block_by(0, -1));
 
-        for event in ctx.events.poll() {
+        for event in hammer.events.poll() {
             match event {
                 Event::KeyDown {keycode: Some(Keycode::Down), ..} => {
                     playfield.move_falling_block_by(0, -1);
@@ -190,7 +138,7 @@ impl Falling {
             return switch(PlayfieldState::Locking(Locking::new()));
         }
 
-        playfield.render(renderer, 32, 32, &game.blocks);
+        playfield.render(renderer, 32, 32, &context.blocks);
 
         next()
     }
@@ -231,10 +179,10 @@ impl Locking {
         }
     }
 
-    pub fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<PlayfieldState> {
-        let dt = ctx.dt;
-        let ref mut renderer = ctx.renderer;
-        let ref mut playfield = game.playfield;
+    pub fn update(&mut self, hammer: &mut Hammer, context: &mut Retris) -> Trans<PlayfieldState> {
+        let dt = hammer.dt;
+        let ref mut renderer = hammer.renderer;
+        let ref mut playfield = context.playfield;
 
         assert!(playfield.falling_block.is_some());
         assert!(!playfield.can_move_falling_block_by(0, -1));
@@ -243,7 +191,7 @@ impl Locking {
             return self.lock(playfield);
         }
 
-        for event in ctx.events.poll() {
+        for event in hammer.events.poll() {
             if let Some(trans) = PlayfieldState::handle_common_event(event, playfield) {
                 return trans;
             }
@@ -260,7 +208,7 @@ impl Locking {
             }
         }
 
-        playfield.render(renderer, 32, 32, &game.blocks);
+        playfield.render(renderer, 32, 32, &context.blocks);
 
         next()
     }
@@ -279,10 +227,10 @@ impl Breaking {
         }
     }
 
-    pub fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<PlayfieldState> {
-        let dt = ctx.dt;
-        let ref mut renderer = ctx.renderer;
-        let ref mut playfield = game.playfield;
+    pub fn update(&mut self, hammer: &mut Hammer, context: &mut Retris) -> Trans<PlayfieldState> {
+        let dt = hammer.dt;
+        let ref mut renderer = hammer.renderer;
+        let ref mut playfield = context.playfield;
 
         assert!(playfield.falling_block.is_none());
         assert!(playfield.has_lines_to_break());
@@ -299,7 +247,7 @@ impl Breaking {
             playfield.blink_breaking_lines();
         }
 
-        playfield.render(renderer, 32, 32, &game.blocks);
+        playfield.render(renderer, 32, 32, &context.blocks);
 
         next()
     }
@@ -344,31 +292,30 @@ impl PlayfieldState {
 }
 
 impl State for PlayfieldState {
-    type Context = Context;
-    type Game = Retris;
+    type Context = Retris;
 
-    fn update(&mut self, ctx: &mut Context, game: &mut Retris) -> Trans<PlayfieldState> {
+    fn update(&mut self, hammer: &mut Hammer, context: &mut Retris) -> Trans<PlayfieldState> {
         match *self {
             PlayfieldState::Prepare(ref mut prepare) => {
-                prepare.update(ctx, game)
+                prepare.update(hammer, context)
             }
             PlayfieldState::Spawn(ref mut spawn) => {
-                spawn.update(ctx, game)
+                spawn.update(hammer, context)
             }
             PlayfieldState::Falling(ref mut falling) => {
-                falling.update(ctx, game)
+                falling.update(hammer, context)
             }
             PlayfieldState::Locking(ref mut locking) => {
-                locking.update(ctx, game)
+                locking.update(hammer, context)
             }
             PlayfieldState::Breaking(ref mut breaking) => {
-                breaking.update(ctx, game)
+                breaking.update(hammer, context)
             }
             PlayfieldState::Paused => {
-                let ref mut renderer = ctx.renderer;
-                let ref mut playfield = game.playfield;
+                let ref mut renderer = hammer.renderer;
+                let ref mut playfield = context.playfield;
 
-                for event in ctx.events.poll() {
+                for event in hammer.events.poll() {
                     match event {
                         Event::KeyDown {keycode: Some(Keycode::P), ..} => {
                             return pop();
@@ -377,14 +324,14 @@ impl State for PlayfieldState {
                     }
                 }
 
-                playfield.render(renderer, 32, 32, &game.blocks);
+                playfield.render(renderer, 32, 32, &context.blocks);
 
                 next()
             }
             PlayfieldState::Lost => {
-                let ref mut renderer = ctx.renderer;
-                let ref mut playfield = game.playfield;
-                playfield.render(renderer, 32, 32, &game.blocks);
+                let ref mut renderer = hammer.renderer;
+                let ref mut playfield = context.playfield;
+                playfield.render(renderer, 32, 32, &context.blocks);
                 next()
             }
         }
@@ -926,40 +873,6 @@ impl FallingBlock {
     }
 }
 
-pub struct Timer {
-    interval: f32,
-    elapsed: f32,
-}
-
-impl Timer {
-    pub fn new(interval: f32) -> Timer {
-        Timer {
-            interval: interval,
-            elapsed: 0.0,
-        }
-    }
-
-    pub fn tick(&mut self, dt: f32) {
-        self.elapsed += dt;
-    }
-
-    pub fn is_expired(&self) -> bool {
-        self.elapsed >= self.interval
-    }
-
-    pub fn elapsed(&self) -> f32 {
-        self.elapsed
-    }
-
-    pub fn percent(&self) -> f32 {
-        self.elapsed / self.interval
-    }
-
-    pub fn reset(&mut self) {
-        self.elapsed = 0.0;
-    }
-}
-
 fn frames_to_seconds(frames: f32) -> f32 {
     // NOTE(coeuvre): Assuming the game run under 60 FPS.
     let fps = 60.0;
@@ -971,7 +884,6 @@ fn gravity_to_delay(gravity: f32) -> f32 {
     // is how many frames per cell.
     frames_to_seconds(1.0 / gravity)
 }
-
 
 pub struct Playfield {
     block: Block,
@@ -1292,55 +1204,8 @@ impl Playfield {
 
 
 fn main() {
-    let sdl2 = sdl2::init().unwrap();
-    let video = sdl2.video().unwrap();
-
-    let width = 800;
-    let height = 800;
-    let window = video.window("Retris", width, height)
-                      .position_centered()
-                      .opengl()
-                      .build()
-                      .unwrap();
-
-    let renderer = window.renderer().present_vsync().build().unwrap();
-
-    let mut context = Context {
-        dt: 0.0,
-        renderer: SoftwareRenderer::new(renderer, width, height),
-        events: EventQueue::new(),
-    };
-
-    let mut retris = Retris::new();
-
-    let mut state_machine = StateMachine::new(PlayfieldState::Prepare(Prepare::new()));
-
-    let mut event_pump = sdl2.event_pump().unwrap();
-
-    let mut frame_last = PreciseTime::now();
-
-    'running: loop {
-        let frame_start = PreciseTime::now();
-
-        for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit {..} |
-                Event::KeyDown {keycode: Some(Keycode::Escape), ..} => break 'running,
-                _ => {}
-            }
-            context.events.push(event);
-        }
-
-        let now = PreciseTime::now();
-        context.dt = frame_last.to(now).num_milliseconds() as f32 / 1000.0;
-        frame_last = now;
-        state_machine.update(&mut context, &mut retris);
-        context.renderer.present(width, height);
-
-        context.events.clear();
-
-        let frame_end = PreciseTime::now();
-        let _ = frame_start.to(frame_end);
-        // println!("FPS: {}", (1000.0 / span.num_milliseconds() as f64) as u32);
-    }
+    let state = PlayfieldState::Prepare(Prepare::new());
+    let context = Retris::new();
+    let state_machine = StateMachine::new(state, context);
+    Hammer::run(state_machine);
 }

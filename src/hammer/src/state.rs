@@ -1,3 +1,5 @@
+use Hammer;
+
 pub enum Trans<S: State> {
     /// Keep current state and go to next frame
     Next,
@@ -24,27 +26,28 @@ pub fn pop<S: State>() -> Trans<S> {
 
 pub trait State: Sized {
     type Context;
-    type Game;
 
-    fn update(&mut self, _ctx: &mut Self::Context, _game: &mut Self::Game) -> Trans<Self> { next() }
+    fn update(&mut self, _hammer: &mut Hammer, _context: &mut Self::Context) -> Trans<Self> { next() }
 }
 
-pub struct StateMachine<S> {
+pub struct StateMachine<S, C> {
     stack: Vec<S>,
+    context: C,
 }
 
-impl<S: State> StateMachine<S> {
-    pub fn new(state: S) -> StateMachine<S> {
+impl<S: State<Context=C>, C> StateMachine<S, C> {
+    pub fn new(state: S, context: C) -> StateMachine<S, C> {
         StateMachine {
             stack: vec![state],
+            context: context,
         }
     }
 
-    pub fn update<C, G>(&mut self, ctx: &mut C, game: &mut G) where S: State<Context=C, Game=G> {
+    pub fn update(&mut self, hammer: &mut Hammer) {
         assert!(self.stack.len() > 0);
 
         loop {
-            match self.stack.last_mut().unwrap().update(ctx, game) {
+            match self.stack.last_mut().unwrap().update(hammer, &mut self.context) {
                 Trans::Next => break,
                 Trans::Switch(state) => self.switch(state),
                 Trans::Push(state) => self.push(state),

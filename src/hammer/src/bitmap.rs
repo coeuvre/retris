@@ -1,4 +1,4 @@
-// This implementation use [https://upload.wikimedia.org/wikipedia/commons/c/c4/BMPfileFormat.pn://upload.wikimedia.org/wikipedia/commons/c/c4/BMPfileFormat.png]
+// This implementation use [https://upload.wikimedia.org/wikipedia/commons/c/c4/BMPfileFormat.png]
 // as reference.
 
 use std::fs::File;

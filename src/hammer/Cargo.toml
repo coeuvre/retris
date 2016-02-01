@@ -1,12 +1,8 @@
 [package]
-name = "retris"
+name = "hammer"
 version = "0.0.1"
 authors = ["Coeuvre Wong <coeuvre@gmail.com>"]
 
 [dependencies]
-rand = "*"
 sdl2 = "*"
 time = "*"
-
-[dependencies.hammer]
-path = "./src/hammer"
