@@ -9,7 +9,6 @@ use sdl2::keyboard::Keycode;
 use time::PreciseTime;
 
 use renderer::*;
-use state::*;
 
 pub mod bitmap;
 pub mod util;
@@ -17,22 +16,32 @@ pub mod state;
 pub mod renderer;
 
 pub mod prelude {
+    pub use sdl2::event::Event;
+    pub use sdl2::keyboard::Keycode;
+
     pub use bitmap::*;
     pub use renderer::*;
     pub use state::*;
     pub use util::*;
 
     pub use Hammer;
+    pub use Scene;
+}
+
+pub trait Scene {
+    fn handle_event(&mut self, _event: &Event) {}
+    fn update(&mut self, _dt: f32) {}
+    fn render(&self, _renderer: &mut Renderer) {}
 }
 
 pub struct Hammer {
     pub dt: f32,
-    pub renderer: SoftwareRenderer,
+    pub renderer: Renderer,
     pub events: EventQueue,
 }
 
 impl Hammer {
-    pub fn run<S, C>(mut state_machine: StateMachine<S, C>) where S: State<Context=C> {
+    pub fn run<S>(mut scene: S) where S: Scene {
         let sdl2 = sdl2::init().unwrap();
         let video = sdl2.video().unwrap();
 
@@ -62,16 +71,18 @@ impl Hammer {
             for event in event_pump.poll_iter() {
                 match event {
                     Event::Quit {..} |
-                        Event::KeyDown {keycode: Some(Keycode::Escape), ..} => break 'running,
-                        _ => {}
+                    Event::KeyDown {keycode: Some(Keycode::Escape), ..} => break 'running,
+                    _ => {}
                 }
+                scene.handle_event(&event);
                 hammer.events.push(event);
             }
 
             let now = PreciseTime::now();
             hammer.dt = frame_last.to(now).num_milliseconds() as f32 / 1000.0;
             frame_last = now;
-            state_machine.update(&mut hammer);
+            scene.update(hammer.dt);
+            scene.render(&mut hammer.renderer);
             hammer.renderer.present(width, height);
 
             hammer.events.clear();

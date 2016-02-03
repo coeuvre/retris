@@ -1,875 +1,141 @@
 extern crate rand;
 extern crate hammer;
-extern crate sdl2;
-
-use std::collections::VecDeque;
-
-use sdl2::event::Event;
-use sdl2::keyboard::Keycode;
 
 use hammer::prelude::*;
 
-const CYAN: i32 = 6;
-const YELLOW: i32 = 0;
-const PURPLE: i32 = 3;
-const GREEN: i32 = 4;
-const RED: i32 = 2;
-const BLUE: i32 = 5;
-const ORANGE: i32 = 1;
+use block::*;
 
-pub struct Retris {
+#[macro_use]
+mod block;
+
+pub enum GameState {
+    Running,
+    Paused,
+}
+
+pub struct Game {
+    state_machine: StateMachine<GameState>,
+
     blocks: Bitmap,
     playfield: Playfield,
 }
 
-impl Retris {
-    pub fn new() -> Retris {
+impl Game {
+    pub fn new() -> Game {
         let blocks = Bitmap::open("./assets/blocks.bmp").unwrap();
-        Retris {
+        Game {
+            state_machine: StateMachine::new(GameState::Running),
+
             playfield: Playfield::new(10, 20, blocks.height() as i32),
             blocks: blocks,
         }
     }
 }
 
-pub struct Prepare {
-    countdown: Timer,
+impl Scene for Game {
+    fn handle_event(&mut self, event: &Event) {
+        match *self.state_machine.current_state() {
+            GameState::Running => {
+                match *event {
+                    Event::KeyDown {keycode: Some(Keycode::P), ..} => {
+                        self.state_machine.trans(push(GameState::Paused));
+                    }
+                    _ => {
+                        self.playfield.handle_event(event);
+                    }
+                }
+            }
+
+            GameState::Paused => {
+                match *event {
+                    Event::KeyDown {keycode: Some(Keycode::P), ..} => {
+                        self.state_machine.trans(pop());
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn update(&mut self, dt: f32) {
+        match *self.state_machine.current_state() {
+            GameState::Running => {
+                self.playfield.update(dt);
+            }
+
+            GameState::Paused => {}
+        }
+    }
+
+    fn render(&self, renderer: &mut Renderer) {
+        self.playfield.render(renderer, 32, 32, &self.blocks);
+    }
 }
 
-impl Prepare {
-    pub fn new() -> Prepare {
-        Prepare {
+#[derive(Debug)]
+pub enum PlayfieldState {
+    Prepare {
+        countdown: Timer,
+    },
+    Spawn {
+        spawn_delay: Timer,
+    },
+    Falling {
+        gravity_delay: Timer,
+    },
+    Locking {
+        lock_delay: Timer,
+        is_immediately: bool,
+    },
+    Breaking {
+        breaking_line_delay: Timer,
+        blink_delay: Timer,
+    },
+    Lost,
+}
+
+impl PlayfieldState {
+    pub fn prepare() -> PlayfieldState {
+        PlayfieldState::Prepare {
             countdown: Timer::new(0.0),
         }
     }
 
-    pub fn update(&mut self, hammer: &mut Hammer, _context: &mut Retris) -> Trans<PlayfieldState> {
-        self.countdown.tick(hammer.dt);
-
-        println!("coutndown: {:.2}", self.countdown.elapsed());
-
-        if self.countdown.is_expired() {
-            return switch(PlayfieldState::Spawn(Spawn::new()));
-        }
-
-        next()
-    }
-}
-
-pub struct Spawn {
-    spawn_delay: Timer,
-}
-
-impl Spawn {
-    pub fn new() -> Spawn {
-        Spawn {
+    pub fn spawn() -> PlayfieldState {
+        PlayfieldState::Spawn {
             spawn_delay: Timer::new(0.0),
         }
     }
 
-    pub fn update(&mut self, hammer: &mut Hammer, context: &mut Retris) -> Trans<PlayfieldState> {
-        let dt = hammer.dt;
-        let ref mut renderer = hammer.renderer;
-        let ref mut playfield = context.playfield;
-
-        assert!(playfield.falling_block.is_none());
-
-        self.spawn_delay.tick(dt);
-        if self.spawn_delay.is_expired() {
-            playfield.spawn_falling_block();
-
-            if playfield.can_move_falling_block_by(0, -1) {
-                return switch(PlayfieldState::Falling(Falling::new()));
-            } else {
-                // NOTE(coeuvre): Block out
-                return switch(PlayfieldState::Lost);
-            }
-        }
-
-        playfield.render(renderer, 32, 32, &context.blocks);
-
-        next()
-    }
-}
-
-pub struct Falling {
-    gravity_delay: Timer,
-}
-
-impl Falling {
-    pub fn new() -> Falling {
-        Falling {
+    pub fn falling() -> PlayfieldState {
+        PlayfieldState::Falling {
             gravity_delay: Timer::new(gravity_to_delay(0.015625)),
         }
     }
 
-    pub fn update(&mut self, hammer: &mut Hammer, context: &mut Retris) -> Trans<PlayfieldState> {
-        let dt = hammer.dt;
-        let ref mut renderer = hammer.renderer;
-        let ref mut playfield = context.playfield;
-
-        assert!(playfield.can_move_falling_block_by(0, -1));
-
-        for event in hammer.events.poll() {
-            match event {
-                Event::KeyDown {keycode: Some(Keycode::Down), ..} => {
-                    playfield.move_falling_block_by(0, -1);
-                    self.gravity_delay.reset();
-                }
-                Event::KeyDown {keycode: Some(Keycode::Space), ..} => {
-                    playfield.drop_falling_block();
-                    return switch(PlayfieldState::Locking(Locking::immediately()));
-                }
-                _ => {
-                    if let Some(trans) = PlayfieldState::handle_common_event(event, playfield) {
-                        return trans;
-                    }
-                }
-            }
-        }
-
-        self.gravity_delay.tick(dt);
-        if self.gravity_delay.is_expired() {
-            playfield.move_falling_block_by(0, -1);
-            self.gravity_delay.reset();
-        }
-
-        if !playfield.can_move_falling_block_by(0, -1) {
-            return switch(PlayfieldState::Locking(Locking::new()));
-        }
-
-        playfield.render(renderer, 32, 32, &context.blocks);
-
-        next()
-    }
-}
-
-pub struct Locking {
-    lock_delay: Timer,
-    is_immediately: bool,
-}
-
-impl Locking {
-    pub fn new() -> Locking {
-        Locking {
+    pub fn locking() -> PlayfieldState {
+        PlayfieldState::Locking {
             lock_delay: Timer::new(frames_to_seconds(30.0)),
             is_immediately: false,
         }
     }
 
-    pub fn immediately() -> Locking {
-        Locking {
+    pub fn locking_immediately() -> PlayfieldState {
+        PlayfieldState::Locking {
             lock_delay: Timer::new(frames_to_seconds(0.0)),
             is_immediately: true,
         }
     }
 
-    fn lock(&mut self, playfield: &mut Playfield) -> Trans<PlayfieldState> {
-        if playfield.is_falling_block_out_of_bounds() {
-            // NOTE(coeuvre): Partial lock out
-            switch(PlayfieldState::Lost)
-        } else {
-            playfield.lock_falling_block();
-
-            if playfield.has_lines_to_break() {
-                switch(PlayfieldState::Breaking(Breaking::new()))
-            } else {
-                switch(PlayfieldState::Spawn(Spawn::new()))
-            }
-        }
-    }
-
-    pub fn update(&mut self, hammer: &mut Hammer, context: &mut Retris) -> Trans<PlayfieldState> {
-        let dt = hammer.dt;
-        let ref mut renderer = hammer.renderer;
-        let ref mut playfield = context.playfield;
-
-        assert!(playfield.falling_block.is_some());
-        assert!(!playfield.can_move_falling_block_by(0, -1));
-
-        if self.is_immediately {
-            return self.lock(playfield);
-        }
-
-        for event in hammer.events.poll() {
-            if let Some(trans) = PlayfieldState::handle_common_event(event, playfield) {
-                return trans;
-            }
-        }
-
-        if playfield.can_move_falling_block_by(0, -1) {
-            return switch(PlayfieldState::Falling(Falling::new()));
-        } else {
-            self.lock_delay.tick(dt);
-            playfield.max_lock_delay.tick(dt);
-
-            if self.lock_delay.is_expired() || playfield.max_lock_delay.is_expired() {
-                return self.lock(playfield);
-            }
-        }
-
-        playfield.render(renderer, 32, 32, &context.blocks);
-
-        next()
-    }
-}
-
-pub struct Breaking {
-    breaking_line_delay: Timer,
-    blink_delay: Timer,
-}
-
-impl Breaking {
-    pub fn new() -> Breaking {
-        Breaking {
+    pub fn breaking() -> PlayfieldState {
+        PlayfieldState::Breaking {
             breaking_line_delay: Timer::new(0.25),
             blink_delay: Timer::new(0.08),
         }
     }
 
-    pub fn update(&mut self, hammer: &mut Hammer, context: &mut Retris) -> Trans<PlayfieldState> {
-        let dt = hammer.dt;
-        let ref mut renderer = hammer.renderer;
-        let ref mut playfield = context.playfield;
-
-        assert!(playfield.falling_block.is_none());
-        assert!(playfield.has_lines_to_break());
-
-        self.breaking_line_delay.tick(dt);
-        if self.breaking_line_delay.is_expired() {
-            playfield.break_lines();
-            return switch(PlayfieldState::Spawn(Spawn::new()));
-        }
-
-        self.blink_delay.tick(dt);
-        if self.blink_delay.is_expired() {
-            self.blink_delay.reset();
-            playfield.blink_breaking_lines();
-        }
-
-        playfield.render(renderer, 32, 32, &context.blocks);
-
-        next()
-    }
-}
-
-pub enum PlayfieldState {
-    Prepare(Prepare),
-    Spawn(Spawn),
-    Falling(Falling),
-    Locking(Locking),
-    Breaking(Breaking),
-    Paused,
-    Lost,
-}
-
-impl PlayfieldState {
-    fn handle_common_event(event: Event, playfield: &mut Playfield) -> Option<Trans<PlayfieldState>> {
-        match event {
-            Event::KeyDown {keycode: Some(Keycode::P), ..} => {
-                return Some(push(PlayfieldState::Paused));
-            }
-            Event::KeyDown {keycode: Some(Keycode::Up), ..} => {
-                playfield.rotate_falling_block(1);
-            }
-            Event::KeyDown {keycode: Some(Keycode::Z), ..} => {
-                playfield.rotate_falling_block(-1);
-            }
-            Event::KeyDown {keycode: Some(Keycode::Left), ..} => {
-                playfield.move_falling_block_by(-1, 0);
-            }
-            Event::KeyDown {keycode: Some(Keycode::Right), ..} => {
-                playfield.move_falling_block_by(1, 0);
-            }
-            Event::KeyDown {keycode: Some(Keycode::C), ..} => {
-                playfield.hold_falling_block();
-            }
-            _ => {}
-        }
-
-        None
-    }
-}
-
-impl State for PlayfieldState {
-    type Context = Retris;
-
-    fn update(&mut self, hammer: &mut Hammer, context: &mut Retris) -> Trans<PlayfieldState> {
-        match *self {
-            PlayfieldState::Prepare(ref mut prepare) => {
-                prepare.update(hammer, context)
-            }
-            PlayfieldState::Spawn(ref mut spawn) => {
-                spawn.update(hammer, context)
-            }
-            PlayfieldState::Falling(ref mut falling) => {
-                falling.update(hammer, context)
-            }
-            PlayfieldState::Locking(ref mut locking) => {
-                locking.update(hammer, context)
-            }
-            PlayfieldState::Breaking(ref mut breaking) => {
-                breaking.update(hammer, context)
-            }
-            PlayfieldState::Paused => {
-                let ref mut renderer = hammer.renderer;
-                let ref mut playfield = context.playfield;
-
-                for event in hammer.events.poll() {
-                    match event {
-                        Event::KeyDown {keycode: Some(Keycode::P), ..} => {
-                            return pop();
-                        }
-                        _ => {}
-                    }
-                }
-
-                playfield.render(renderer, 32, 32, &context.blocks);
-
-                next()
-            }
-            PlayfieldState::Lost => {
-                let ref mut renderer = hammer.renderer;
-                let ref mut playfield = context.playfield;
-                playfield.render(renderer, 32, 32, &context.blocks);
-                next()
-            }
-        }
-    }
-}
-
-#[derive(Copy, Clone)]
-pub struct Cell {
-    index: i32,
-    color: RGBA,
-}
-
-macro_rules! block_iter {
-    ($block:expr) => {
-        $block.data
-            .iter()
-            .enumerate()
-            .filter(|&(_, cell)| cell.is_some())
-            .map(|(i, cell)| {
-                (i % $block.width, i / $block.width, cell.unwrap())
-            })
-    }
-}
-
-pub struct Block {
-    width: usize,
-    height: usize,
-    data: Vec<Option<Cell>>,
-}
-
-impl Block {
-    pub fn new(width: usize, height: usize) -> Block {
-        Block {
-            width: width,
-            height: height,
-            data: vec![None; width * height],
-        }
-    }
-
-    pub fn from_data(width: usize, height: usize, data: Vec<Option<Cell>>) -> Block {
-        assert!(data.len() == width * height);
-        Block {
-            width: width,
-            height: height,
-            data: data,
-        }
-    }
-
-    pub fn bottom(&self) -> usize {
-        for (_, row, _) in block_iter!(self) {
-            return row;
-        }
-
-        unreachable!();
-    }
-
-    pub fn get(&self, x: usize, y: usize) -> Option<&Cell> {
-        if x >= self.width || y >= self.height {
-            return None;
-        }
-
-        self.data[y * self.width + x].as_ref()
-    }
-
-    pub fn set(&mut self, x: usize, y: usize, cell: Option<Cell>) {
-        if x < self.width && y < self.height {
-            self.data[y * self.width + x] = cell;
-        }
-    }
-
-    pub fn set_with_cell(&mut self, x: usize, y: usize, cell: Cell) {
-        self.set(x, y, Some(cell));
-    }
-
-    pub fn set_with_block(&mut self, x: i32, y: i32, block: &Block) {
-        for (col, row, cell) in block_iter!(block) {
-            self.set_with_cell((x + col as i32) as usize, (y + row as i32) as usize, cell);
-        }
-    }
-
-    pub fn is_valid_position(&self, x: i32, y: i32, block: &Block) -> bool {
-        for (col, row, _) in block_iter!(block) {
-            let x = x + col as i32;
-            let y = y + row as i32;
-
-            if x < 0 || x >= self.width as i32 || y < 0 ||
-               self.get(x as usize, y as usize).is_some() {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    pub fn is_out_of_bounds(&self, x: i32, y: i32, block: &Block) -> bool {
-        for (col, row, _) in block_iter!(block) {
-            let x = x + col as i32;
-            let y = y + row as i32;
-
-            if x < 0 || x >= self.width as i32 ||
-               y < 0 || y >= self.height as i32 {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    pub fn get_break_lines(&self) -> Vec<usize> {
-        let mut lines = vec![];
-        for row in 0..self.height {
-            let mut is_empty_line = true;
-            let mut is_need_break = true;
-
-            for col in 0..self.width {
-                is_empty_line = false;
-                let block = self.get(col, row);
-                if block.is_none() {
-                    is_need_break = false;
-                    break;
-                }
-            }
-
-            if !is_empty_line && is_need_break {
-                lines.push(row);
-            }
-        }
-
-        lines.reverse();
-        lines
-    }
-
-    pub fn break_lines(&mut self) {
-        for row in self.get_break_lines() {
-            for row in row + 1..self.height {
-                for col in 0..self.width {
-                    let cell = self.get(col, row).map(|b| b.clone());
-                    self.set(col, row - 1, cell);
-                }
-            }
-        }
-    }
-
-    pub fn get_ghost_block_pos(&self, x: i32, mut y: i32, block: &Block) -> (i32, i32) {
-        loop {
-            if !self.is_valid_position(x, y, block) {
-                return (x, y + 1)
-            }
-            y -= 1;
-        }
-    }
-}
-
-pub struct BlockTemplate {
-    templates: [[Block; 4]; 7],
-    wall_kick_table: [[[(i32, i32); 5]; 8]; 2],
-}
-
-impl BlockTemplate {
-    pub fn new() -> BlockTemplate {
-         let cyan = Cell {
-             color: RGBA {r: 0.0, g: 240.0 / 255.0, b: 241.0 / 255.0, a: 1.0},
-             index: CYAN,
-         };
-         let yellow = Cell {
-             color: RGBA {r: 240.0 / 255.0, g: 242.0 / 255.0, b: 0.0, a: 1.0},
-             index: YELLOW,
-         };
-         let purple = Cell {
-             color: RGBA {r: 161.0 / 255.0, g: 0.0, b: 244.0 / 255.0, a: 1.0},
-             index: PURPLE,
-         };
-         let green = Cell {
-             color: RGBA {r: 0.0, g: 242.0 / 255.0, b: 0.0, a: 1.0},
-             index: GREEN,
-         };
-         let red = Cell {
-             color: RGBA {r: 243.0 / 255.0, g: 0.0, b: 0.0, a: 1.0},
-             index: RED,
-         };
-         let blue = Cell {
-             color: RGBA {r: 0.0, g: 0.0, b: 244.0 / 255.0, a: 1.0},
-             index: BLUE,
-         };
-         let orange = Cell {
-             color: RGBA {r: 242.0 / 255.0, g: 161.0 / 255.0, b: 0.0, a: 1.0},
-             index: ORANGE,
-         };
-
-        // NOTE(coeuvre): Bitmap data for blocks. The origin is left-bottom corner.
-        //
-        //   x x x x
-        //   x x x x
-        //   x x x x
-        //   o x x x
-        //
-        //   Using SRS described at https://tetris.wiki/SRS.
-        //
-        BlockTemplate {
-            templates: [
-                // Cyan I
-                [
-                    Block::from_data(4, 4, vec![
-                        None, None, None, None,
-                        None, None, None, None,
-                        Some(cyan),  Some(cyan),  Some(cyan),  Some(cyan),
-                        None, None, None, None,
-                    ]),
-                    Block::from_data(4, 4, vec![
-                        None, None, Some(cyan), None,
-                        None, None, Some(cyan), None,
-                        None, None, Some(cyan), None,
-                        None, None, Some(cyan), None,
-                    ]),
-                    Block::from_data(4, 4, vec![
-                        None, None, None, None,
-                        Some(cyan),  Some(cyan),  Some(cyan),  Some(cyan),
-                        None, None, None, None,
-                        None, None, None, None,
-                    ]),
-                    Block::from_data(4, 4, vec![
-                        None, Some(cyan), None, None,
-                        None, Some(cyan), None, None,
-                        None, Some(cyan), None, None,
-                        None, Some(cyan), None, None,
-                    ]),
-                ],
-
-                // Yellow O
-                [
-                    Block::from_data(4, 3, vec![
-                        None, None, None, None,
-                        None, Some(yellow), Some(yellow), None,
-                        None, Some(yellow), Some(yellow), None,
-                    ]),
-                    Block::from_data(4, 3, vec![
-                        None, None, None, None,
-                        None, Some(yellow), Some(yellow), None,
-                        None, Some(yellow), Some(yellow), None,
-                    ]),
-                    Block::from_data(4, 3, vec![
-                        None, None, None, None,
-                        None, Some(yellow), Some(yellow), None,
-                        None, Some(yellow), Some(yellow), None,
-                    ]),
-                    Block::from_data(4, 3, vec![
-                        None, None, None, None,
-                        None, Some(yellow), Some(yellow), None,
-                        None, Some(yellow), Some(yellow), None,
-                    ]),
-                ],
-
-                // Purple T
-                [
-                    Block::from_data(3, 3, vec![
-                        None, None, None,
-                        Some(purple), Some(purple), Some(purple),
-                        None, Some(purple), None,
-                    ]),
-                    Block::from_data(3, 3, vec![
-                        None, Some(purple), None,
-                        None, Some(purple), Some(purple),
-                        None, Some(purple), None,
-                    ]),
-                    Block::from_data(3, 3, vec![
-                        None, Some(purple), None,
-                        Some(purple), Some(purple), Some(purple),
-                        None, None, None,
-                    ]),
-                    Block::from_data(3, 3, vec![
-                        None, Some(purple), None,
-                        Some(purple), Some(purple), None,
-                        None, Some(purple), None,
-                    ]),
-                ],
-
-                // Green S
-                [
-                    Block::from_data(3, 3, vec![
-                        None, None, None,
-                        Some(green), Some(green), None,
-                        None, Some(green), Some(green),
-                    ]),
-                    Block::from_data(3, 3, vec![
-                        None, None, Some(green),
-                        None, Some(green), Some(green),
-                        None, Some(green), None,
-                    ]),
-                    Block::from_data(3, 3, vec![
-                        Some(green), Some(green), None,
-                        None, Some(green), Some(green),
-                        None, None, None,
-                    ]),
-                    Block::from_data(3, 3, vec![
-                        None, Some(green), None,
-                        Some(green), Some(green), None,
-                        Some(green), None, None,
-                    ]),
-                ],
-
-                // Red Z
-                [
-                    Block::from_data(3, 3, vec![
-                        None, None, None,
-                        None, Some(red), Some(red),
-                        Some(red), Some(red), None,
-                    ]),
-                    Block::from_data(3, 3, vec![
-                        None, Some(red), None,
-                        None, Some(red), Some(red),
-                        None, None, Some(red),
-                    ]),
-                    Block::from_data(3, 3, vec![
-                        None, Some(red), Some(red),
-                        Some(red), Some(red), None,
-                        None, None, None,
-                    ]),
-                    Block::from_data(3, 3, vec![
-                        Some(red), None, None,
-                        Some(red), Some(red), None,
-                        None, Some(red), None,
-                    ]),
-                ],
-
-                // Blue J
-                [
-                    Block::from_data(3, 3, vec![
-                        None, None, None,
-                        Some(blue), Some(blue), Some(blue),
-                        Some(blue), None, None,
-                    ]),
-                    Block::from_data(3, 3, vec![
-                        None, Some(blue), None,
-                        None, Some(blue), None,
-                        None, Some(blue), Some(blue),
-                    ]),
-                    Block::from_data(3, 3, vec![
-                        None, None, Some(blue),
-                        Some(blue), Some(blue), Some(blue),
-                        None, None, None,
-                    ]),
-                    Block::from_data(3, 3, vec![
-                        Some(blue), Some(blue), None,
-                        None, Some(blue), None,
-                        None, Some(blue), None,
-                    ]),
-                ],
-
-                // Orange L
-                [
-                    Block::from_data(3, 3, vec![
-                        None, None, None,
-                        Some(orange), Some(orange), Some(orange),
-                        None, None, Some(orange),
-                    ]),
-                    Block::from_data(3, 3, vec![
-                        None, Some(orange), Some(orange),
-                        None, Some(orange), None,
-                        None, Some(orange), None,
-                    ]),
-                    Block::from_data(3, 3, vec![
-                        Some(orange), None, None,
-                        Some(orange), Some(orange), Some(orange),
-                        None, None, None,
-                    ]),
-                    Block::from_data(3, 3, vec![
-                        None, Some(orange), None,
-                        None, Some(orange), None,
-                        Some(orange), Some(orange), None,
-                    ]),
-                ],
-            ],
-
-            wall_kick_table: [
-                // J, L, S, T, Z wall kick data
-                [
-                    // 0 -> 1
-                    [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],
-                    // 1 -> 0
-                    [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],
-                    // 1 -> 2
-                    [(0, 0), (1, 0), (1, -1), (0, 2), (1, 2)],
-                    // 2 -> 1
-                    [(0, 0), (-1, 0), (-1, 1), (0, -2), (-1, -2)],
-                    // 2 -> 3
-                    [(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],
-                    // 3 -> 2
-                    [(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],
-                    // 3 -> 0
-                    [(0, 0), (-1, 0), (-1, -1), (0, 2), (-1, 2)],
-                    // 0 -> 3
-                    [(0, 0), (1, 0), (1, 1), (0, -2), (1, -2)],
-                ],
-
-                // I wall kick data
-                [
-                    // 0 -> 1
-                    [(0, 0), (-2, 0), (1, 0), (-2, -1), (1, 2)],
-                    // 1 -> 0
-                    [(0, 0), (2, 0), (-1, 0), (2, 1), (-1, -2)],
-                    // 1 -> 2
-                    [(0, 0), (-1, 0), (2, 0), (-1, 2), (2, -1)],
-                    // 2 -> 1
-                    [(0, 0), (1, 0), (-2, 0), (1, -2), (-2, 1)],
-                    // 2 -> 3
-                    [(0, 0), (2, 0), (-1, 0), (2, 1), (-1, -2)],
-                    // 3 -> 2
-                    [(0, 0), (-2, 0), (1, 0), (-2, -1), (1, 2)],
-                    // 3 -> 0
-                    [(0, 0), (1, 0), (-2, 0), (1, -2), (-2, 1)],
-                    // 0 -> 3
-                    [(0, 0), (-1, 0), (2, 0), (-1, 2), (2, -1)],
-                ],
-            ],
-        }
-    }
-
-    pub fn block(&self, template: &BlockTemplateRef) -> &Block {
-        &self.templates[template.shape][template.order]
-    }
-
-    pub fn wall_kick_table(&self, template: &BlockTemplateRef, new_template: &BlockTemplateRef) -> &[(i32, i32); 5] {
-        assert!(template.order != new_template.order);
-
-        let index = match template.order {
-            0 => match new_template.order {
-                1 => 0,
-                3 => 7,
-                _ => unreachable!(),
-            },
-            1 => match new_template.order {
-                2 => 2,
-                0 => 1,
-                _ => unreachable!(),
-            },
-            2 => match new_template.order {
-                3 => 4,
-                1 => 3,
-                _ => unreachable!(),
-            },
-            3 => match new_template.order {
-                0 => 6,
-                2 => 5,
-                _ => unreachable!(),
-            },
-            _ => unreachable!(),
-        };
-
-        if template.shape == 0 {
-            &self.wall_kick_table[1][index]
-        } else {
-            &self.wall_kick_table[0][index]
-        }
-    }
-}
-
-pub struct BlockTemplateGenerator {
-    next_templates: VecDeque<BlockTemplateRef>,
-}
-
-impl BlockTemplateGenerator {
-    pub fn new(block_template: &BlockTemplate) -> BlockTemplateGenerator {
-        BlockTemplateGenerator {
-            next_templates: vec![
-                BlockTemplateGenerator::generate_raw(block_template),
-                BlockTemplateGenerator::generate_raw(block_template),
-                BlockTemplateGenerator::generate_raw(block_template),
-            ].into_iter().collect(),
-        }
-    }
-
-    pub fn generate(&mut self, block_template: &BlockTemplate) -> BlockTemplateRef {
-        let new_template = BlockTemplateGenerator::generate_raw(block_template);
-        self.next_templates.push_back(new_template);
-        self.next_templates.pop_front().unwrap()
-    }
-
-    pub fn next_templates(&self) -> &[BlockTemplateRef] {
-        self.next_templates.as_slices().0
-    }
-
-    fn generate_raw(block_template: &BlockTemplate) -> BlockTemplateRef {
-        let shape = rand::random::<usize>() % block_template.templates.len();
-        let order = 0;
-        let order_max = block_template.templates[shape].len();
-        BlockTemplateRef {
-            shape: shape,
-            order: order,
-            order_max: order_max,
-        }
-    }
-}
-
-#[derive(Copy, Clone)]
-pub struct BlockTemplateRef {
-    shape: usize,
-    order: usize,
-    order_max: usize,
-}
-
-impl BlockTemplateRef {
-    pub fn rrotate(&mut self) {
-        self.order = (self.order + 1) % self.order_max;
-    }
-
-    pub fn lrotate(&mut self) {
-        if self.order == 0 {
-            self.order = self.order_max - 1;
-        } else {
-            self.order -= 1;
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct FallingBlock {
-    template: BlockTemplateRef,
-    x: i32,
-    y: i32,
-}
-
-impl FallingBlock {
-    pub fn new(x: i32, y: i32, template: BlockTemplateRef) -> FallingBlock {
-        FallingBlock {
-            template: template,
-            x: x,
-            y: y,
-        }
-    }
-
-    pub fn move_to(&mut self, x: i32, y: i32) {
-        self.x = x;
-        self.y = y;
-    }
-
-    pub fn move_by(&mut self, dx: i32, dy: i32) {
-        self.x += dx;
-        self.y += dy;
+    pub fn lost() -> PlayfieldState {
+        PlayfieldState::Lost
     }
 }
 
@@ -886,6 +152,11 @@ fn gravity_to_delay(gravity: f32) -> f32 {
 }
 
 pub struct Playfield {
+    state_machine: StateMachine<PlayfieldState>,
+    raw: PlayfieldRaw,
+}
+
+pub struct PlayfieldRaw {
     block: Block,
 
     falling_block: Option<FallingBlock>,
@@ -904,10 +175,10 @@ pub struct Playfield {
     block_size_in_pixels: i32,
 }
 
-impl Playfield {
-    pub fn new(width: usize, height: usize, block_size_in_pixels: i32) -> Playfield {
+impl PlayfieldRaw {
+    pub fn new(width: usize, height: usize, block_size_in_pixels: i32) -> PlayfieldRaw {
         let block_template = BlockTemplate::new();
-        Playfield {
+        PlayfieldRaw {
             block: Block::new(width, height),
 
             falling_block: None,
@@ -1200,12 +471,208 @@ impl Playfield {
         self.render_borders(renderer, x, y, rgba(1.0, 1.0, 1.0, 1.0));
         self.render_next_blocks(renderer, x, y, blocks_bitmap);
     }
+
+    fn handle_common_event(&mut self, event: &Event) {
+        match *event {
+            /*
+            Event::KeyDown {keycode: Some(Keycode::P), ..} => {
+                return Some(push(PlayfieldState::Paused));
+            }
+            */
+            Event::KeyDown {keycode: Some(Keycode::Up), ..} => {
+                self.rotate_falling_block(1);
+            }
+            Event::KeyDown {keycode: Some(Keycode::Z), ..} => {
+                self.rotate_falling_block(-1);
+            }
+            Event::KeyDown {keycode: Some(Keycode::Left), ..} => {
+                self.move_falling_block_by(-1, 0);
+            }
+            Event::KeyDown {keycode: Some(Keycode::Right), ..} => {
+                self.move_falling_block_by(1, 0);
+            }
+            Event::KeyDown {keycode: Some(Keycode::C), ..} => {
+                self.hold_falling_block();
+            }
+            _ => {}
+        }
+    }
+
+    pub fn handle_event(&mut self, event: &Event, state: &mut PlayfieldState) -> Option<Trans<PlayfieldState>> {
+        match *state {
+            PlayfieldState::Falling { ref mut gravity_delay } => {
+                match *event {
+                    Event::KeyDown {keycode: Some(Keycode::Down), ..} => {
+                        self.move_falling_block_by(0, -1);
+                        gravity_delay.reset();
+                    }
+                    Event::KeyDown {keycode: Some(Keycode::Space), ..} => {
+                        self.drop_falling_block();
+                        return Some(switch(PlayfieldState::locking_immediately()));
+                    }
+                    _ => {
+                        self.handle_common_event(event);
+                    }
+                }
+
+                if !self.can_move_falling_block_by(0, -1) {
+                    return Some(switch(PlayfieldState::locking()));
+                }
+            }
+
+            PlayfieldState::Locking { .. } => {
+                self.handle_common_event(event);
+
+                if self.can_move_falling_block_by(0, -1) {
+                    return Some(switch(PlayfieldState::falling()));
+                }
+            }
+
+            _ => {}
+        }
+
+        None
+    }
+
+    fn lock(&mut self) -> Trans<PlayfieldState> {
+        if self.is_falling_block_out_of_bounds() {
+            // NOTE(coeuvre): Partial lock out
+            switch(PlayfieldState::lost())
+        } else {
+            self.lock_falling_block();
+
+            if self.has_lines_to_break() {
+                switch(PlayfieldState::breaking())
+            } else {
+                switch(PlayfieldState::spawn())
+            }
+        }
+    }
+
+    pub fn update(&mut self, dt: f32, state: &mut PlayfieldState) -> Option<Trans<PlayfieldState>> {
+        //println!("{:?}", state);
+
+        match *state {
+            PlayfieldState::Prepare { ref mut countdown } => {
+                countdown.tick(dt);
+
+                println!("coutndown: {:.2}", countdown.elapsed());
+
+                if countdown.is_expired() {
+                    return Some(switch(PlayfieldState::spawn()))
+                }
+            }
+
+            PlayfieldState::Spawn { ref mut spawn_delay } => {
+                assert!(self.falling_block.is_none());
+
+                spawn_delay.tick(dt);
+                if spawn_delay.is_expired() {
+                    self.spawn_falling_block();
+
+                    if self.can_move_falling_block_by(0, -1) {
+                        return Some(switch(PlayfieldState::falling()));
+                    } else {
+                        // NOTE(coeuvre): Block out
+                        return Some(switch(PlayfieldState::lost()));
+                    }
+                }
+            }
+
+            PlayfieldState::Falling { ref mut gravity_delay } => {
+                assert!(self.can_move_falling_block_by(0, -1));
+
+                gravity_delay.tick(dt);
+                if gravity_delay.is_expired() {
+                    self.move_falling_block_by(0, -1);
+                    gravity_delay.reset();
+                }
+
+                if !self.can_move_falling_block_by(0, -1) {
+                    return Some(switch(PlayfieldState::locking()));
+                }
+            }
+
+            PlayfieldState::Locking {
+                ref mut lock_delay,
+                is_immediately,
+            } => {
+                assert!(self.falling_block.is_some());
+                assert!(!self.can_move_falling_block_by(0, -1));
+
+                if is_immediately {
+                    return Some(self.lock());
+                }
+
+                if self.can_move_falling_block_by(0, -1) {
+                    return Some(switch(PlayfieldState::falling()));
+                } else {
+                    lock_delay.tick(dt);
+                    self.max_lock_delay.tick(dt);
+
+                    if lock_delay.is_expired() || self.max_lock_delay.is_expired() {
+                        return Some(self.lock());
+                    }
+                }
+            }
+
+            PlayfieldState::Breaking{
+                ref mut breaking_line_delay,
+                ref mut blink_delay,
+            } => {
+                assert!(self.falling_block.is_none());
+                assert!(self.has_lines_to_break());
+
+                breaking_line_delay.tick(dt);
+                if breaking_line_delay.is_expired() {
+                    self.break_lines();
+                    return Some(switch(PlayfieldState::spawn()));
+                }
+
+                blink_delay.tick(dt);
+                if blink_delay.is_expired() {
+                    blink_delay.reset();
+                    self.blink_breaking_lines();
+                }
+            }
+
+            PlayfieldState::Lost => {}
+        }
+
+        None
+    }
+}
+
+impl Playfield {
+    pub fn new(width: usize, height: usize, block_size_in_pixels: i32) -> Playfield {
+        Playfield {
+            state_machine: StateMachine::new(PlayfieldState::Prepare {
+                countdown: Timer::new(0.0),
+            }),
+
+            raw: PlayfieldRaw::new(width, height, block_size_in_pixels),
+        }
+    }
+
+    pub fn handle_event(&mut self, event: &Event) {
+        while let Some(trans) = self.raw.handle_event(event, self.state_machine.current_state_mut()) {
+            self.state_machine.trans(trans);
+        }
+    }
+
+    pub fn update(&mut self, dt: f32) {
+        while let Some(trans) = self.raw.update(dt, self.state_machine.current_state_mut()) {
+            self.state_machine.trans(trans);
+        }
+    }
+
+    pub fn render(&self, renderer: &mut Renderer, x: i32, y: i32, blocks_bitmap: &Bitmap) {
+        self.raw.render(renderer, x, y, blocks_bitmap);
+    }
 }
 
 
 fn main() {
-    let state = PlayfieldState::Prepare(Prepare::new());
-    let context = Retris::new();
-    let state_machine = StateMachine::new(state, context);
-    Hammer::run(state_machine);
+    let retris = Game::new();
+    Hammer::run(retris);
 }

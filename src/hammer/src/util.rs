@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub struct Timer {
     interval: f32,
     elapsed: f32,

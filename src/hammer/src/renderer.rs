@@ -1,6 +1,6 @@
 use sdl2::pixels::PixelFormatEnum;
 use sdl2::rect::Rect;
-use sdl2::render::{Renderer, Texture};
+use sdl2::render::{Renderer as Sdl2Renderer, Texture};
 
 use bitmap::Bitmap;
 
@@ -14,8 +14,10 @@ fn clamp(value: i32, min: i32, max: i32) -> i32 {
     }
 }
 
+pub type Renderer = SoftwareRenderer;
+
 pub struct SoftwareRenderer {
-    sdl_renderer: Renderer<'static>,
+    sdl_renderer: Sdl2Renderer<'static>,
     buffer: Texture,
     pixels: Vec<u32>,
     width: i32,
@@ -23,7 +25,7 @@ pub struct SoftwareRenderer {
 }
 
 impl SoftwareRenderer {
-    pub fn new(renderer: Renderer<'static>, width: u32, height: u32) -> SoftwareRenderer {
+    pub fn new(renderer: Sdl2Renderer<'static>, width: u32, height: u32) -> SoftwareRenderer {
         SoftwareRenderer {
             buffer: renderer.create_texture_streaming(PixelFormatEnum::RGBA8888, (width, height))
                             .unwrap(),

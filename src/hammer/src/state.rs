@@ -1,72 +1,55 @@
-use Hammer;
-
-pub enum Trans<S: State> {
-    /// Keep current state and go to next frame
-    Next,
+pub enum Trans<S> {
     Switch(S),
     Push(S),
     Pop,
 }
 
-pub fn next<S: State>() -> Trans<S> {
-    Trans::Next
-}
-
-pub fn switch<S: State>(state: S) -> Trans<S> {
+pub fn switch<S>(state: S) -> Trans<S> {
     Trans::Switch(state)
 }
 
-pub fn push<S: State>(state: S) -> Trans<S> {
+pub fn push<S>(state: S) -> Trans<S> {
     Trans::Push(state)
 }
 
-pub fn pop<S: State>() -> Trans<S> {
+pub fn pop<S>() -> Trans<S> {
     Trans::Pop
 }
 
-pub trait State: Sized {
-    type Context;
-
-    fn update(&mut self, _hammer: &mut Hammer, _context: &mut Self::Context) -> Trans<Self> { next() }
-}
-
-pub struct StateMachine<S, C> {
+pub struct StateMachine<S> {
     stack: Vec<S>,
-    context: C,
 }
 
-impl<S: State<Context=C>, C> StateMachine<S, C> {
-    pub fn new(state: S, context: C) -> StateMachine<S, C> {
+impl<S> StateMachine<S> {
+    pub fn new(init: S) -> StateMachine<S> {
         StateMachine {
-            stack: vec![state],
-            context: context,
+            stack: vec![init],
         }
     }
 
-    pub fn update(&mut self, hammer: &mut Hammer) {
-        assert!(self.stack.len() > 0);
+    pub fn current_state(&mut self) -> &S {
+        self.stack.last().unwrap()
+    }
 
-        loop {
-            match self.stack.last_mut().unwrap().update(hammer, &mut self.context) {
-                Trans::Next => break,
-                Trans::Switch(state) => self.switch(state),
-                Trans::Push(state) => self.push(state),
-                Trans::Pop => self.pop(),
+    pub fn current_state_mut(&mut self) -> &mut S {
+        self.stack.last_mut().unwrap()
+    }
+
+    pub fn trans(&mut self, trans: Trans<S>) {
+        match trans {
+            Trans::Switch(state) => {
+                self.stack.pop();
+                self.stack.push(state);
+            }
+
+            Trans::Push(state) => {
+                self.stack.push(state);
+            }
+
+            Trans::Pop => {
+                assert!(self.stack.len() > 0);
+                self.stack.pop();
             }
         }
-    }
-
-    fn switch(&mut self, state: S) {
-        self.stack.pop();
-        self.stack.push(state);
-    }
-
-    fn push(&mut self, state: S) {
-        self.stack.push(state);
-    }
-
-    fn pop(&mut self) {
-        assert!(self.stack.len() > 0);
-        self.stack.pop();
     }
 }
