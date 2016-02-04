@@ -140,13 +140,13 @@ impl PlayfieldState {
 }
 
 fn frames_to_seconds(frames: f32) -> f32 {
-    // NOTE(coeuvre): Assuming the game run under 60 FPS.
+    // NOTE: Assuming the game run under 60 FPS.
     let fps = 60.0;
     frames / fps
 }
 
 fn gravity_to_delay(gravity: f32) -> f32 {
-    // NOTE(coeuvre): gravity is how many cells per frame, so the inverse
+    // NOTE: gravity is how many cells per frame, so the inverse
     // is how many frames per cell.
     frames_to_seconds(1.0 / gravity)
 }
@@ -474,11 +474,6 @@ impl PlayfieldRaw {
 
     fn handle_common_event(&mut self, event: &Event) {
         match *event {
-            /*
-            Event::KeyDown {keycode: Some(Keycode::P), ..} => {
-                return Some(push(PlayfieldState::Paused));
-            }
-            */
             Event::KeyDown {keycode: Some(Keycode::Up), ..} => {
                 self.rotate_falling_block(1);
             }
@@ -536,7 +531,7 @@ impl PlayfieldRaw {
 
     fn lock(&mut self) -> Trans<PlayfieldState> {
         if self.is_falling_block_out_of_bounds() {
-            // NOTE(coeuvre): Partial lock out
+            // NOTE: Partial lock out
             switch(PlayfieldState::lost())
         } else {
             self.lock_falling_block();
@@ -573,7 +568,7 @@ impl PlayfieldRaw {
                     if self.can_move_falling_block_by(0, -1) {
                         return Some(switch(PlayfieldState::falling()));
                     } else {
-                        // NOTE(coeuvre): Block out
+                        // NOTE: Block out
                         return Some(switch(PlayfieldState::lost()));
                     }
                 }
@@ -586,10 +581,10 @@ impl PlayfieldRaw {
                 if gravity_delay.is_expired() {
                     self.move_falling_block_by(0, -1);
                     gravity_delay.reset();
-                }
 
-                if !self.can_move_falling_block_by(0, -1) {
-                    return Some(switch(PlayfieldState::locking()));
+                    if !self.can_move_falling_block_by(0, -1) {
+                        return Some(switch(PlayfieldState::locking()));
+                    }
                 }
             }
 
@@ -604,15 +599,11 @@ impl PlayfieldRaw {
                     return Some(self.lock());
                 }
 
-                if self.can_move_falling_block_by(0, -1) {
-                    return Some(switch(PlayfieldState::falling()));
-                } else {
-                    lock_delay.tick(dt);
-                    self.max_lock_delay.tick(dt);
+                lock_delay.tick(dt);
+                self.max_lock_delay.tick(dt);
 
-                    if lock_delay.is_expired() || self.max_lock_delay.is_expired() {
-                        return Some(self.lock());
-                    }
+                if lock_delay.is_expired() || self.max_lock_delay.is_expired() {
+                    return Some(self.lock());
                 }
             }
 
@@ -674,5 +665,5 @@ impl Playfield {
 
 fn main() {
     let retris = Game::new();
-    Hammer::run(retris);
+    Hammer::new().title("Retris").resolution(800, 800).run(retris);
 }
